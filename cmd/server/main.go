@@ -5,7 +5,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+
 	"retail-managment-system/internal/auth"
+	"retail-managment-system/internal/delivery/telegram"
 	"retail-managment-system/internal/domain"
 	"retail-managment-system/internal/middleware"
 	"retail-managment-system/internal/repository"
@@ -16,15 +18,15 @@ import (
 )
 
 func main() {
+	// Загрузка переменных окружения
 	if err := godotenv.Load(); err != nil {
 		log.Print("No .env file found")
 	}
 
+	// Подключение к базе данных
 	dbPool, err := pgxpool.New(context.Background(), os.Getenv("DATABASE_URL"))
-
 	if err != nil {
 		log.Fatalf("Ошибка пула БД %v\n", err)
-		os.Exit(1)
 	}
 	defer dbPool.Close()
 
@@ -32,13 +34,25 @@ func main() {
 		log.Fatalf("База недоступна: %v", err)
 	}
 
+	// Инициализация репозиториев
 	productRepo := repository.NewProductRepository(dbPool)
 	saleRepo := repository.NewSaleRepository(dbPool)
 	userRepo := repository.NewUserRepository(dbPool)
 
-	jwtSecret := os.Getenv("JWT_SECRET")
+	// Инициализация и запуск Telegram-бота
+	tgBot, err := telegram.NewBot(os.Getenv("TELEGRAM_APITOKEN"))
+	if err != nil {
+		log.Printf("Ошибка инициализации бота: %v", err)
+	} else {
+		go tgBot.Start(saleRepo, userRepo)
+	}
 
+	jwtSecret := os.Getenv("JWT_SECRET")
 	r := gin.Default()
+
+	// --- ПУБЛИЧНЫЕ ЭНДПОИНТЫ ---
+
+	// Регистрация нового пользователя
 	r.POST("/register", func(c *gin.Context) {
 		var req domain.LoginRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -47,7 +61,11 @@ func main() {
 		}
 
 		hash, _ := auth.HashPassword(req.Password)
-		user := domain.User{Username: req.Username, PasswordHash: hash, Role: "seller"}
+		user := domain.User{
+			Username:     req.Username,
+			PasswordHash: hash,
+			Role:         "seller",
+		}
 
 		if err := userRepo.Create(context.Background(), user); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Пользователь уже существует"})
@@ -56,6 +74,7 @@ func main() {
 		c.JSON(http.StatusCreated, gin.H{"message": "Успешно"})
 	})
 
+	// Вход в систему и получение токена
 	r.POST("/login", func(c *gin.Context) {
 		var req domain.LoginRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -68,15 +87,15 @@ func main() {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Неверный логин или пароль"})
 			return
 		}
-		//cannot use user (variable of struct type domain.User) as domain.Product value in argument to userRepo.Create
+
 		token, _ := auth.GenerateToken(user.ID, user.Role, jwtSecret)
 		c.JSON(http.StatusOK, gin.H{"token": token})
 	})
 
 	api := r.Group("/api")
-	api.Use(middleware.AuthMiddleware(jwtSecret))
+	api.Use(middleware.AuthMiddleware(jwtSecret)) // Проверка JWT-токена
 	{
-		// Поиск товара (для сканера)
+		// Поиск товара по штрихкоду
 		api.GET("/products/:barcode", func(c *gin.Context) {
 			barcode := c.Param("barcode")
 			product, err := productRepo.GetByBarcode(context.Background(), barcode)
@@ -87,7 +106,7 @@ func main() {
 			c.JSON(http.StatusOK, product)
 		})
 
-		// Добавление товара
+		// Добавление нового товара в базу
 		api.POST("/products", func(c *gin.Context) {
 			var newProduct domain.Product
 			if err := c.ShouldBindJSON(&newProduct); err != nil {
@@ -98,7 +117,6 @@ func main() {
 			c.JSON(http.StatusCreated, gin.H{"message": "ОК"})
 		})
 
-		// Оформление продажи
 		api.POST("/sales", func(c *gin.Context) {
 			var input struct {
 				Items []domain.SaleItem `json:"items"`
@@ -109,15 +127,27 @@ func main() {
 				return
 			}
 
-			// Берем ID продавца прямо из токена!
 			sellerID := c.MustGet("user_id").(int)
 
-			err := saleRepo.ExecuteSale(context.Background(), sellerID, input.Items, input.Total)
+			saleID, err := saleRepo.ExecuteSale(context.Background(), sellerID, input.Items, input.Total)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-			c.JSON(http.StatusOK, gin.H{"message": "Продажа оформлена"})
+
+			if tgBot != nil {
+				ownerChatID, err := userRepo.GetOwnerChatID(context.Background())
+				if err == nil && ownerChatID != 0 {
+					go tgBot.SendSaleNotification(ownerChatID, saleID, input.Total)
+				} else {
+					log.Println("Хозяин не привязал Telegram, уведомление не отправлено")
+				}
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"message": "Продажа оформлена",
+				"sale_id": saleID,
+			})
 		})
 	}
 	r.Run()
