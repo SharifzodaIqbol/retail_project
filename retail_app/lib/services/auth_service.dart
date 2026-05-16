@@ -1,32 +1,50 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'api_service.dart';
 
 class AuthService {
-  // Для Chrome используем localhost
-  final String baseUrl = 'http://localhost:8080';
-
-  Future<bool> login(String username, String password) async {
+  Future<Map<String, dynamic>?> login(
+    String username,
+    String password,
+  ) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/login'),
-        body: jsonEncode({'username': username, 'password': password}),
-        headers: {'Content-Type': 'application/json'},
-      );
+      final response = await http
+          .post(
+            Uri.parse('${ApiService.baseUrl}/login'),
+            body: jsonEncode({'username': username, 'password': password}),
+            headers: {'Content-Type': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final token = data['token'];
-
-        // Сохраняем токен в память браузера
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('jwt_token', token);
-        return true;
+        await prefs.setString('jwt_token', data['token']);
+        await prefs.setString('user_role', data['role']);
+        await prefs.setString('username', data['username'] ?? username);
+        return data;
       }
-      return false;
+      return null;
     } catch (e) {
-      print('Ошибка входа: $e');
-      return false;
+      return null;
     }
+  }
+
+  Future<void> logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('jwt_token');
+    await prefs.remove('user_role');
+    await prefs.remove('username');
+  }
+
+  Future<String?> getRole() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('user_role');
+  }
+
+  Future<String?> getUsername() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('username');
   }
 }
