@@ -3,7 +3,6 @@ package telegram
 import (
 	"context"
 	"fmt"
-	"log"
 	"retail-managment-system/internal/auth"
 	"retail-managment-system/internal/repository"
 	"time"
@@ -29,79 +28,80 @@ func NewBot(token string) (*Bot, error) {
 	return &Bot{teleBot: b}, nil
 }
 
-func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.UserRepository) {
+func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.UserRepository, productRepo *repository.ProductRepository) {
+	// Создаем меню
 	menu := &telebot.ReplyMarkup{ResizeKeyboard: true}
 	btnStats := menu.Text("📊 Выручка за сегодня")
-	btnHelp := menu.Text("❓ Помощь")
+	btnProfit := menu.Text("💰 Чистая прибыль")
 	btnTop := menu.Text("🔝 Топ товаров")
+	btnLowStock := menu.Text("⚠️ Заканчиваются")
+	btnHelp := menu.Text("❓ Помощь")
+
 	menu.Reply(
-		menu.Row(btnStats),
-		menu.Row(btnHelp, btnTop), // Поставим в один ряд для красоты
+		menu.Row(btnStats, btnProfit),
+		menu.Row(btnTop, btnLowStock),
+		menu.Row(btnHelp),
 	)
 
-	// 1. Команда привязки аккаунта
-	// В bot.go, внутри метода Start
+	// --- ОБРАБОТЧИКИ КОМАНД ---
+
 	b.teleBot.Handle("/reg", func(c telebot.Context) error {
 		args := c.Args()
-		// 1. Проверяем, что передали и логин, и пароль
 		if len(args) < 2 {
-			return c.Send("⚠️ Использование: `/reg логин пароль`\nПример: `/reg boss qwerty123`", telebot.ModeMarkdown)
+			return c.Send("⚠️ Использование: `/reg логин пароль`", telebot.ModeMarkdown)
 		}
-
-		username := args[0]
-		password := args[1]
-
-		// 2. Ищем пользователя в базе (так же, как при логине)
+		username, password := args[0], args[1]
 		user, err := userRepo.GetByUsername(context.Background(), username)
-
 		if err != nil || !auth.CheckPasswordHash(password, user.PasswordHash) {
 			return c.Send("❌ Неверный логин или пароль.")
 		}
-
-		if user.TgChatID != 0 && user.TgChatID != c.Chat().ID {
-			return c.Send("⛔ Этот аккаунт уже привязан к другому устройству. Если это ошибка, обратитесь к программисту для сброса.")
-		}
-
 		err = userRepo.UpdateChatID(context.Background(), username, c.Chat().ID)
 		if err != nil {
-			return c.Send("❌ Ошибка привязки. База данных недоступна.")
+			return c.Send("❌ Ошибка привязки.")
 		}
-
-		return c.Send(fmt.Sprintf("✅ Аккаунт **%s** успешно привязан!\n\n*В целях безопасности удалите свое сообщение с паролем из этого чата.*", username), telebot.ModeMarkdown)
+		return c.Send(fmt.Sprintf("✅ Аккаунт **%s** привязан!", username), telebot.ModeMarkdown)
 	})
 
-	// 2. Обычный старт
 	b.teleBot.Handle("/start", func(c telebot.Context) error {
-		return c.Send("Привет! Если вы владелец магазина, привяжите аккаунт командой: `/reg ваш_логин`", menu, telebot.ModeMarkdown)
+		return c.Send("Привет! Для работы привяжите аккаунт через /reg", menu, telebot.ModeMarkdown)
 	})
 
-	// 3. Защищенная кнопка "Выручка"
+	// --- ОБРАБОТЧИКИ КНОПОК ---
+
+	// Кнопка: Выручка
 	b.teleBot.Handle(&btnStats, func(c telebot.Context) error {
-		// ПРОВЕРКА ПРАВ: Кто нажал кнопку?
 		user, err := userRepo.GetByChatID(context.Background(), c.Chat().ID)
-		if err != nil || user.Role != "owner" { // Убедись, что в БД у хозяина роль "owner", а не "seller"
-			return c.Send("⛔ У вас нет прав для просмотра выручки.")
+		if err != nil || user.Role != "owner" {
+			return c.Send("⛔ Нет прав.")
 		}
-
-		total, err := saleRepo.GetTodayTotal(context.Background())
+		stats, err := saleRepo.GetTodayTotal(context.Background())
 		if err != nil {
-			log.Printf("Ошибка получения статистики: %v", err)
-			return c.Send("❌ Ошибка при получении данных")
+			return c.Send("❌ Ошибка данных")
 		}
-
-		msg := fmt.Sprintf("📈 **Отчет за сегодня (%s):**\n\n💰 Итоговая выручка: **%.2f сомони**",
-			time.Now().Format("02.01.2006"), total)
+		msg := fmt.Sprintf("📈 **Выручка за сегодня:** **%.2f сомони**", stats.Total)
 		return c.Send(msg, telebot.ModeMarkdown)
 	})
 
-	// 4. Защищенная кнопка "Топ"
-	b.teleBot.Handle(&btnTop, func(c telebot.Context) error {
-		// ПРОВЕРКА ПРАВ
+	// Кнопка: Чистая прибыль
+	b.teleBot.Handle(&btnProfit, func(c telebot.Context) error {
 		user, err := userRepo.GetByChatID(context.Background(), c.Chat().ID)
 		if err != nil || user.Role != "owner" {
-			return c.Send("⛔ У вас нет прав для просмотра топа товаров.")
+			return c.Send("⛔ У вас нет прав для просмотра прибыли.")
 		}
+		profit, err := saleRepo.GetDailyNetProfit(context.Background())
+		if err != nil {
+			return c.Send("❌ Ошибка расчета прибыли")
+		}
+		msg := fmt.Sprintf("💵 **Чистая прибыль сегодня:**\n**%.2f сомони**", profit)
+		return c.Send(msg, telebot.ModeMarkdown)
+	})
 
+	// Кнопка: Топ товаров
+	b.teleBot.Handle(&btnTop, func(c telebot.Context) error {
+		user, err := userRepo.GetByChatID(context.Background(), c.Chat().ID)
+		if err != nil || user.Role != "owner" {
+			return c.Send("⛔ Нет прав.")
+		}
 		report, err := saleRepo.GetTopProducts(context.Background(), 5)
 		if err != nil {
 			return c.Send("❌ Ошибка получения топа")
@@ -109,20 +109,51 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		return c.Send(report, telebot.ModeMarkdown)
 	})
 
+	// Кнопка: Заканчиваются товары
+	b.teleBot.Handle(&btnLowStock, func(c telebot.Context) error {
+		user, err := userRepo.GetByChatID(context.Background(), c.Chat().ID)
+		if err != nil || user.Role != "owner" {
+			return c.Send("⛔ Только владелец может видеть остатки.")
+		}
+		products, err := productRepo.GetLowStockProducts(context.Background(), 10)
+		if err != nil {
+			return c.Send("❌ Ошибка базы.")
+		}
+		if len(products) == 0 {
+			return c.Send("✅ Всех товаров достаточно.")
+		}
+		msg := "🚨 **Заканчиваются:**\n"
+		for _, p := range products {
+			msg += fmt.Sprintf("• %s: **%d шт.**\n", p.Name, p.Stock)
+		}
+		return c.Send(msg, telebot.ModeMarkdown)
+	})
+
 	b.teleBot.Handle(&btnHelp, func(c telebot.Context) error {
-		return c.Send("Я бизнес-ассистент. Для доступа к кнопкам нужно быть владельцем и привязать аккаунт через /reg.")
+		return c.Send("Для доступа к статистике привяжите аккаунт командой /reg логин пароль")
 	})
 
 	b.teleBot.Start()
 }
 
-// Функции отправки уведомлений остаются без изменений
+// --- Уведомления ---
+
 func (b *Bot) SendSaleNotification(chatID int64, saleID int, total float64) {
 	msg := fmt.Sprintf("💰 **Новая продажа!**\nЧек: №%d\nСумма: **%.2f сомони**", saleID, total)
 	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
 }
 
 func (b *Bot) SendCancelNotification(chatID int64, saleID int, reason string, total float64) {
-	msg := fmt.Sprintf("⚠️ **ВНИМАНИЕ: ОТМЕНА ЧЕКА!**\nЧек: №%d\nСумма: %.2f\nПричина: %s", saleID, total, reason)
+	msg := fmt.Sprintf("⚠️ **ОТМЕНА ЧЕКА!**\nЧек: №%d\nСумма: %.2f\nПричина: %s", saleID, total, reason)
+	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
+}
+
+func (b *Bot) SendDailyReport(chatID int64, totalDay float64, salesCount int) {
+	msg := fmt.Sprintf("📊 **Итоги дня**\n💰 Выручка: **%.2f сомони**\n🧾 Чеков: **%d**", totalDay, salesCount)
+	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
+}
+func (b *Bot) SendLowStockAlert(chatID int64, productName string, remainingStock int) {
+	msg := fmt.Sprintf("⚠️ **ВНИМАНИЕ: ТОВАР ЗАКАНЧИВАЕТСЯ!**\n\n📦 Товар: %s\n📉 Осталось всего: **%d шт.**",
+		productName, remainingStock)
 	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
 }
