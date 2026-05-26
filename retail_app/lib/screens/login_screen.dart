@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   // Добавляем обязательный параметр onLogin, который требует main.dart
@@ -15,7 +16,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _authService = AuthService();
-  
+
   bool _isLoading = false;
 
   @override
@@ -25,7 +26,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-void _handleLogin() async {
+  void _handleLogin() async {
     if (_isLoading) return;
 
     setState(() {
@@ -46,14 +47,14 @@ void _handleLogin() async {
 
     // 1. Проверяем, что сервер вообще что-то вернул (Map не null)
     // 2. И проверяем, что внутри этой мапы есть ключ 'role'
-    if (success != null && success.containsKey('role') && success['role'] != null) {
-      
+    if (success != null &&
+        success.containsKey('role') &&
+        success['role'] != null) {
       // Достаем роль из мапы и приводим к строке
       final String userRole = success['role'].toString();
-      
+
       // Передаем строковую роль в main.dart
-      widget.onLogin(userRole); 
-      
+      widget.onLogin(userRole);
     } else {
       // Если success == null или в нем нет роли, показываем ошибку
       ScaffoldMessenger.of(context).showSnackBar(
@@ -104,13 +105,27 @@ void _handleLogin() async {
                 style: ElevatedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 50),
                 ),
-                child: _isLoading 
+                child: _isLoading
                     ? const SizedBox(
                         height: 20,
                         width: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Text('Войти'),
+              ),
+              const SizedBox(height: 15),
+              TextButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const RegisterScreen(),
+                    ),
+                  );
+                },
+                child: const Text(
+                  'Регистрация новой компании (14 дней бесплатно)',
+                ),
               ),
             ],
           ),

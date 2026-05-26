@@ -97,9 +97,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: const Text('Отмена'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-            ),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text(
               'Оплатить',
@@ -114,25 +112,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final saleData = {
       'items': cart.items.values
-          .map((i) => {
-                'product_id': i.product.id,
-                'quantity': i.quantity,
-                'price': i.product.sellPrice,
-              })
+          .map(
+            (i) => {
+              'product_id': i.product.id,
+              'quantity': i.quantity,
+              'price': i.product.sellPrice,
+            },
+          )
           .toList(),
       'total_amount': cart.totalAmount,
     };
 
-    bool success = await _apiService.createSale(
-      cart.items.values
-          .map((i) => {
-                'product_id': i.product.id,
-                'quantity': i.quantity,
-                'price': i.product.sellPrice,
-              })
-          .toList(),
-      cart.totalAmount,
-    );
+    // Передаем этот объект в метод
+    bool success = await _apiService.createSale(saleData);
 
     if (!success) {
       await DatabaseHelper.instance.insertOfflineSale(saleData);
@@ -158,7 +150,11 @@ class _HomeScreenState extends State<HomeScreen> {
     cart.clearCart();
   }
 
-  void _showQuantityDialog(BuildContext context, CartProvider cart, dynamic item) {
+  void _showQuantityDialog(
+    BuildContext context,
+    CartProvider cart,
+    dynamic item,
+  ) {
     final controller = TextEditingController(text: item.quantity.toString());
     showDialog(
       context: context,
@@ -249,8 +245,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (_username.isNotEmpty)
               Text(
                 _username,
-                style:
-                    const TextStyle(fontSize: 12, color: Colors.grey),
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
           ],
         ),
@@ -297,13 +292,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   decoration: InputDecoration(
                     hintText: 'Штрихкод или название товара...',
                     prefixIcon: IconButton(
-                      icon: const Icon(Icons.qr_code_scanner,
-                          color: Color(0xFF4F6EF7)),
+                      icon: const Icon(
+                        Icons.qr_code_scanner,
+                        color: Color(0xFF4F6EF7),
+                      ),
                       onPressed: () async {
                         final code = await Navigator.push<String>(
                           context,
                           MaterialPageRoute(
-                              builder: (_) => BarcodeScannerWidget()),
+                            builder: (_) => BarcodeScannerWidget(),
+                          ),
                         );
                         if (code != null) {
                           _searchController.text = code;
@@ -484,17 +482,22 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                                     GestureDetector(
                                       onTap: () => _showQuantityDialog(
-                                          context, cart, item),
+                                        context,
+                                        cart,
+                                        item,
+                                      ),
                                       child: Container(
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 12,
                                           vertical: 6,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: const Color(0xFF4F6EF7)
-                                              .withOpacity(0.1),
-                                          borderRadius:
-                                              BorderRadius.circular(8),
+                                          color: const Color(
+                                            0xFF4F6EF7,
+                                          ).withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
                                         ),
                                         child: Text(
                                           '${item.quantity}',
@@ -575,10 +578,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     Text(
                       '${cart.items.length} позиций',
-                      style: TextStyle(
-                        color: Colors.grey[500],
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: Colors.grey[500], fontSize: 12),
                     ),
                   ],
                 ),

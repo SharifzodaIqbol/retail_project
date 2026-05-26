@@ -45,19 +45,21 @@ class _InventoryScreenState extends State<InventoryScreen> {
     final q = _searchCtrl.text.toLowerCase();
     setState(() {
       _filtered = _allProducts
-          .where((p) =>
-              p.name.toLowerCase().contains(q) ||
-              p.barcode.contains(q))
+          .where(
+            (p) => p.name.toLowerCase().contains(q) || p.barcode.contains(q),
+          )
           .toList();
     });
   }
 
   void _showRestockDialog(Product product) {
     final amountCtrl = TextEditingController();
-    final sellCtrl =
-        TextEditingController(text: product.sellPrice.toStringAsFixed(2));
-    final buyCtrl =
-        TextEditingController(text: product.buyPrice.toStringAsFixed(2));
+    final sellCtrl = TextEditingController(
+      text: product.sellPrice.toStringAsFixed(2),
+    );
+    final buyCtrl = TextEditingController(
+      text: product.buyPrice.toStringAsFixed(2),
+    );
 
     showModalBottomSheet(
       context: context,
@@ -79,10 +81,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
           children: [
             Text(
               product.name,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
             Text(
               'Текущий остаток: ${product.stock} шт.',
@@ -189,10 +188,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
         foregroundColor: Colors.black87,
         elevation: 0,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadProducts,
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadProducts),
         ],
       ),
       body: Column(
@@ -241,13 +237,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
                             itemBuilder: (context, i) {
                               final p = _filtered[i];
                               final stockColor = _stockColor(p.stock);
-                              final margin =
-                                  p.sellPrice > 0 && p.buyPrice > 0
-                                      ? ((p.sellPrice - p.buyPrice) /
-                                              p.sellPrice *
-                                              100)
-                                          .toStringAsFixed(0)
-                                      : '0';
+                              final margin = p.sellPrice > 0 && p.buyPrice > 0
+                                  ? ((p.sellPrice - p.buyPrice) /
+                                            p.sellPrice *
+                                            100)
+                                        .toStringAsFixed(0)
+                                  : '0';
 
                               return Container(
                                 decoration: BoxDecoration(
@@ -300,10 +295,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                           vertical: 6,
                                         ),
                                         decoration: BoxDecoration(
-                                          color:
-                                              stockColor.withOpacity(0.1),
-                                          borderRadius:
-                                              BorderRadius.circular(8),
+                                          color: stockColor.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
                                         ),
                                         child: Text(
                                           '${p.stock} шт.',
@@ -319,8 +314,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                           Icons.edit,
                                           color: Color(0xFF4F6EF7),
                                         ),
-                                        onPressed: () =>
-                                            _showRestockDialog(p),
+                                        onPressed: () => _showRestockDialog(p),
                                       ),
                                     ],
                                   ),

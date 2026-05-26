@@ -8,13 +8,12 @@ import 'screens/analytics_screen.dart';
 import 'screens/inventory_screen.dart';
 import 'screens/users_screen.dart';
 import 'screens/history_screen.dart';
+import 'services/api_service.dart';
 
 void main() {
   runApp(
     MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => CartProvider()),
-      ],
+      providers: [ChangeNotifierProvider(create: (_) => CartProvider())],
       child: const RetailApp(),
     ),
   );
@@ -28,6 +27,7 @@ class RetailApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Retail POS',
+      navigatorKey: ApiService.navigatorKey,
       theme: ThemeData(
         primaryColor: const Color(0xFF4F6EF7),
         colorScheme: ColorScheme.fromSeed(
@@ -75,9 +75,7 @@ class _BootstrapperState extends State<_Bootstrapper> {
   @override
   Widget build(BuildContext context) {
     if (_checking) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     if (!_loggedIn) {
       return LoginScreen(
@@ -112,11 +110,7 @@ class _MainShellState extends State<MainShell> {
         label: 'Касса',
         screen: const HomeScreen(),
       ),
-      _NavItem(
-        icon: Icons.history,
-        label: 'История',
-        screen: HistoryScreen(),
-      ),
+      _NavItem(icon: Icons.history, label: 'История', screen: HistoryScreen()),
       _NavItem(
         icon: Icons.inventory_2,
         label: 'Склад',
@@ -125,16 +119,20 @@ class _MainShellState extends State<MainShell> {
     ];
 
     if (widget.role == 'owner') {
-      items.add(_NavItem(
-        icon: Icons.bar_chart,
-        label: 'Аналитика',
-        screen: const AnalyticsScreen(),
-      ));
-      items.add(_NavItem(
-        icon: Icons.people,
-        label: 'Сотрудники',
-        screen: const UsersScreen(),
-      ));
+      items.add(
+        _NavItem(
+          icon: Icons.bar_chart,
+          label: 'Аналитика',
+          screen: const AnalyticsScreen(),
+        ),
+      );
+      items.add(
+        _NavItem(
+          icon: Icons.people,
+          label: 'Сотрудники',
+          screen: const UsersScreen(),
+        ),
+      );
     }
 
     return items;
@@ -156,10 +154,7 @@ class _MainShellState extends State<MainShell> {
         elevation: 8,
         destinations: items
             .map(
-              (e) => NavigationDestination(
-                icon: Icon(e.icon),
-                label: e.label,
-              ),
+              (e) => NavigationDestination(icon: Icon(e.icon), label: e.label),
             )
             .toList(),
       ),

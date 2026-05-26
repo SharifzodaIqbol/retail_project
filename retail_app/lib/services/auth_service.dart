@@ -4,10 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
 
 class AuthService {
-  Future<Map<String, dynamic>?> login(
-    String username,
-    String password,
-  ) async {
+  // Существующий метод login остается без изменений...
+  Future<Map<String, dynamic>?> login(String username, String password) async {
     try {
       final response = await http
           .post(
@@ -28,6 +26,48 @@ class AuthService {
       return null;
     } catch (e) {
       return null;
+    }
+  }
+
+  // Регистрация компании
+  Future<bool> register(
+    String companyName,
+    String username,
+    String password,
+  ) async {
+    try {
+      final url = '${ApiService.baseUrl}/register';
+
+      // Явно создаем Map с правильными ключами snake_case, как в Go
+      final Map<String, String> requestBody = {
+        'company_name': companyName,
+        'username': username,
+        'password': password,
+      };
+
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode(requestBody),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 201) {
+        return true;
+      } else {
+        // Если опять 400, мы увидим, что именно пришло в ответ
+        print(
+          "Бэкенд отклонил запрос: ${response.statusCode} -> ${response.body}",
+        );
+        return false;
+      }
+    } catch (e) {
+      print("Критическая ошибка отправки: $e");
+      return false;
     }
   }
 
