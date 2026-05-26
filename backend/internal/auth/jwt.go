@@ -8,16 +8,18 @@ import (
 
 // Claims — это данные, которые мы "зашиваем" в токен
 type Claims struct {
-	UserID int    `json:"user_id"`
-	Role   string `json:"role"`
+	UserID    int    `json:"user_id"`
+	CompanyID int    `json:"company_id"`
+	Role      string `json:"role"`
 	jwt.RegisteredClaims
 }
 
 // GenerateToken создает новый JWT токен на 24 часа
-func GenerateToken(userID int, role, secret string) (string, error) {
+func GenerateToken(userID, companyID int, role, secret string) (string, error) {
 	claims := &Claims{
-		UserID: userID,
-		Role:   role,
+		UserID:    userID,
+		CompanyID: companyID,
+		Role:      role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 		},

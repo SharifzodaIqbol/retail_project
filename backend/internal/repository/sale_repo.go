@@ -34,19 +34,19 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, sellerID int, items []
 	var lowStockProducts []domain.Product
 
 	for _, item := range items {
-		_, err = tx.Exec(ctx,
-			"INSERT INTO sale_items (sale_id, product_id, quantity, price_at_sale) VALUES ($1, $2, $3, $4)",
+		_, err = tx.Exec(ctx, `INSERT INTO sale_items 
+							   (sale_id, product_id, quantity, price_at_sale) 
+							   VALUES ($1, $2, $3, $4)`,
 			saleID, item.ProductID, item.Quantity, item.PriceAtSale)
 		if err != nil {
 			return 0, nil, err
 		}
 
 		var p domain.Product
-		err = tx.QueryRow(ctx, `
-            UPDATE products 
-            SET stock = stock - $1 
-            WHERE id = $2 AND stock >= $1 
-            RETURNING name, stock`,
+		err = tx.QueryRow(ctx, `UPDATE products 
+								SET stock = stock - $1 
+								WHERE id = $2 AND stock >= $1 
+								RETURNING name, stock`,
 			item.Quantity, item.ProductID).Scan(&p.Name, &p.Stock)
 
 		if err != nil {

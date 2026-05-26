@@ -17,8 +17,8 @@ func NewUserRepository(db *pgxpool.Pool) *UserRepository {
 
 func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
 	var u domain.User
-	query := `SELECT id, username, password_hash, role FROM users WHERE username = $1`
-	err := r.db.QueryRow(ctx, query, username).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role)
+	query := `SELECT id, company_id, username, password_hash, role FROM users WHERE username = $1`
+	err := r.db.QueryRow(ctx, query, username).Scan(&u.ID, &u.CompanyID, &u.Username, &u.PasswordHash, &u.Role)
 	return &u, err
 }
 
@@ -42,8 +42,8 @@ func (r *UserRepository) GetAll(ctx context.Context) ([]domain.User, error) {
 }
 
 func (r *UserRepository) Create(ctx context.Context, u domain.User) error {
-	query := `INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3)`
-	_, err := r.db.Exec(ctx, query, u.Username, u.PasswordHash, u.Role)
+	query := `INSERT INTO users (username, password_hash, role, company_id) VALUES ($1, $2, $3, $4)`
+	_, err := r.db.Exec(ctx, query, u.Username, u.PasswordHash, u.Role, u.CompanyID)
 	return err
 }
 

@@ -17,16 +17,16 @@ func NewProductRepository(db *pgxpool.Pool) *ProductRepository {
 
 func (r *ProductRepository) Create(ctx context.Context, p domain.Product) error {
 	query := `INSERT INTO products 
-	(name, barcode, buy_price, sell_price, stock) VALUES ($1, $2, $3, $4, $5)`
-	_, err := r.db.Exec(ctx, query, p.Name, p.Barcode, p.BuyPrice, p.SellPrice, p.Stock)
+	(company_id, name, barcode, buy_price, sell_price, stock) VALUES ($1, $2, $3, $4, $5, $6)`
+	_, err := r.db.Exec(ctx, query, p.CompanyID, p.Name, p.Barcode, p.BuyPrice, p.SellPrice, p.Stock)
 	return err
 }
 
-func (r *ProductRepository) GetAll(ctx context.Context) ([]domain.Product, error) {
+func (r *ProductRepository) GetAll(ctx context.Context, companyID int) ([]domain.Product, error) {
 	query := `SELECT id, name, barcode, buy_price, sell_price, stock FROM products 
-              WHERE is_active = true ORDER BY name ASC`
+              WHERE is_active = true AND company_id = $1 ORDER BY stock ASC`
 
-	rows, err := r.db.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -43,11 +43,11 @@ func (r *ProductRepository) GetAll(ctx context.Context) ([]domain.Product, error
 	return products, nil
 }
 
-func (r *ProductRepository) GetByBarcode(ctx context.Context, barcode string) (*domain.Product, error) {
+func (r *ProductRepository) GetByBarcode(ctx context.Context, companyID int, barcode string) (*domain.Product, error) {
 	var p domain.Product
-	query := `SELECT id, name, barcode, buy_price, sell_price, stock FROM products WHERE barcode = $1 AND is_active = true`
+	query := `SELECT id, name, barcode, buy_price, sell_price, stock FROM products WHERE barcode = $1 AND company_id = $2 AND is_active = true`
 
-	err := r.db.QueryRow(ctx, query, barcode).Scan(
+	err := r.db.QueryRow(ctx, query, barcode, companyID).Scan(
 		&p.ID, &p.Name, &p.Barcode, &p.BuyPrice, &p.SellPrice, &p.Stock,
 	)
 	if err != nil {

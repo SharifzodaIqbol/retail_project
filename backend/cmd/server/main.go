@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -32,6 +33,7 @@ func main() {
 	productRepo := repository.NewProductRepository(dbPool)
 	saleRepo := repository.NewSaleRepository(dbPool)
 	userRepo := repository.NewUserRepository(dbPool)
+	companyRepo := repository.NewCompanyRepository(dbPool)
 
 	tgBot, err := telegram.NewBot(os.Getenv("TELEGRAM_APITOKEN"))
 	if err != nil {
@@ -60,7 +62,27 @@ func main() {
 
 	r := gin.Default()
 	r.Use(middleware.CorsMiddleware())
+	r.POST("/register", func(c *gin.Context) {
+		log.Println("=== ЗАПРОС ДОШЕЛ ДО БЭКЕНДА! ===")
+		var req domain.RegisterCompanyRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 
+		hash, err := auth.HashPassword(req.Password)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка шифрования"})
+			return
+		}
+
+		err = companyRepo.RegisterNewBusiness(context.Background(), req.CompanyName, req.Username, hash)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Логин уже занят или ошибка БД"})
+			return
+		}
+		c.JSON(http.StatusCreated, gin.H{"status": "success", "message": "Бизнес успешно зарегистрирован!"})
+	})
 	// ─── Авторизация ───────────────────────────────────────────────────────────
 	r.POST("/login", func(c *gin.Context) {
 		var req domain.LoginRequest
@@ -68,23 +90,38 @@ func main() {
 			c.JSON(400, gin.H{"error": "Неверные данные"})
 			return
 		}
+
 		user, err := userRepo.GetByUsername(context.Background(), req.Username)
 		if err != nil || !auth.CheckPasswordHash(req.Password, user.PasswordHash) {
 			c.JSON(401, gin.H{"error": "Неверный логин или пароль"})
 			return
 		}
-		token, _ := auth.GenerateToken(user.ID, user.Role, os.Getenv("JWT_SECRET"))
+		token, errToken := auth.GenerateToken(user.ID, user.CompanyID, user.Role, os.Getenv("JWT_SECRET"))
+		if errToken != nil {
+			log.Println("Ошибка генерации JWT токена:", errToken)
+			c.JSON(500, gin.H{"error": "Ошибка сервера при создании сессии"})
+			return
+		}
+
 		c.JSON(200, gin.H{"token": token, "role": user.Role, "username": user.Username})
 	})
 
 	// ─── Защищённые роуты ──────────────────────────────────────────────────────
 	api := r.Group("/api")
 	api.Use(middleware.AuthMiddleware(os.Getenv("JWT_SECRET")))
+	api.Use(middleware.SubscriptionMiddleware(dbPool))
 	{
 		// ── Товары ──
+		api.GET("/products/search", func(c *gin.Context) {
+			name := c.Query("name")
+			products, _ := productRepo.SearchByName(context.Background(), name)
+			c.JSON(200, products)
+		})
+
 		api.GET("/products/:barcode", func(c *gin.Context) {
+			companyID := c.MustGet("company_id").(int)
 			barcode := c.Param("barcode")
-			p, err := productRepo.GetByBarcode(context.Background(), barcode)
+			p, err := productRepo.GetByBarcode(context.Background(), companyID, barcode)
 			if err != nil {
 				c.JSON(404, gin.H{"error": "Товар не найден"})
 				return
@@ -92,14 +129,9 @@ func main() {
 			c.JSON(200, p)
 		})
 
-		api.GET("/products/search", func(c *gin.Context) {
-			name := c.Query("name")
-			products, _ := productRepo.SearchByName(context.Background(), name)
-			c.JSON(200, products)
-		})
-
 		api.GET("/products", func(c *gin.Context) {
-			products, err := productRepo.GetAll(context.Background())
+			companyID := c.MustGet("company_id").(int)
+			products, err := productRepo.GetAll(context.Background(), companyID)
 			if err != nil {
 				c.JSON(500, gin.H{"error": "Ошибка получения товаров"})
 				return
@@ -113,6 +145,7 @@ func main() {
 				c.JSON(400, gin.H{"error": err.Error()})
 				return
 			}
+			p.CompanyID = c.MustGet("company_id").(int)
 			if err := productRepo.Create(context.Background(), p); err != nil {
 				c.JSON(500, gin.H{"error": "Ошибка создания товара"})
 				return
@@ -305,8 +338,23 @@ func main() {
 					c.JSON(400, gin.H{"error": err.Error()})
 					return
 				}
+
+				ownerCompanyID, exists := c.Get("company_id")
+				log.Println(ownerCompanyID)
+				if !exists {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Компания создателя не определена"})
+					return
+				}
+
 				hash, _ := auth.HashPassword(req.Password)
-				user := domain.User{Username: req.Username, PasswordHash: hash, Role: req.Role}
+
+				user := domain.User{
+					Username:     req.Username,
+					PasswordHash: hash,
+					Role:         req.Role,
+					CompanyID:    ownerCompanyID.(int),
+				}
+
 				if err := userRepo.Create(context.Background(), user); err != nil {
 					c.JSON(500, gin.H{"error": "Ошибка создания пользователя"})
 					return

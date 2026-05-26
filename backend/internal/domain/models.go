@@ -1,7 +1,23 @@
 package domain
 
+import "time"
+
+type Company struct {
+	ID          int       `json:"id"`
+	Name        string    `json:"name"`
+	BillingPlan string    `json:"billing_plan"`
+	TrialEndsAt time.Time `json:"trial_ends_at"`
+	IsPaid      bool      `json:"is_paid"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+type RegisterCompanyRequest struct {
+	CompanyName string `json:"company_name" binding:"required"`
+	Username    string `json:"username" binding:"required"`
+	Password    string `json:"password" binding:"required"`
+}
 type Product struct {
 	ID        int     `json:"id"`
+	CompanyID int     `json:"company_id"`
 	Name      string  `json:"name"`
 	Barcode   string  `json:"barcode"`
 	BuyPrice  float64 `json:"buy_price"`
@@ -29,6 +45,7 @@ type Sale struct {
 
 type User struct {
 	ID           int    `json:"id"`
+	CompanyID    int    `json:"company_id"`
 	Username     string `json:"username"`
 	PasswordHash string `json:"-"`
 	Role         string `json:"role"`
@@ -55,10 +72,10 @@ type PeriodSummary struct {
 }
 
 type TopProduct struct {
-	ProductID  int     `json:"product_id"`
-	Name       string  `json:"name"`
-	TotalQty   int     `json:"total_qty"`
-	TotalRev   float64 `json:"total_revenue"`
+	ProductID   int     `json:"product_id"`
+	Name        string  `json:"name"`
+	TotalQty    int     `json:"total_qty"`
+	TotalRev    float64 `json:"total_revenue"`
 	TotalProfit float64 `json:"total_profit"`
 }
 
