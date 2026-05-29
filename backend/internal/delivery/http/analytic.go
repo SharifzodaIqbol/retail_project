@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +31,7 @@ func (h *Handler) getSalesByDay(c *gin.Context) {
 	days, _ := strconv.Atoi(c.DefaultQuery("days", "7"))
 	data, err := h.saleRepo.GetSalesByDay(context.Background(), days)
 	if err != nil {
+		log.Printf("[ERROR] Failed to get sales by day: %v", err)
 		c.JSON(500, gin.H{"error": "Ошибка"})
 		return
 	}

@@ -240,21 +240,43 @@ func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, limit int) 
 
 func (r *SaleRepository) GetSalesByDay(ctx context.Context, days int) ([]domain.SaleByDay, error) {
 	query := `
-        SELECT 
-            TO_CHAR(s.created_at::date, 'DD.MM') as date,
-            COALESCE(SUM(s.total_amount), 0) as revenue,
-            COALESCE(SUM(si.quantity * (si.price_at_sale - p.buy_price)), 0) as profit,
-            COUNT(DISTINCT s.id) as count
-        FROM generate_series(
+    WITH daily_series AS (
+        -- Генерируем сетку дат за запрошенный период
+        SELECT generate_series(
             CURRENT_DATE - ($1 - 1) * INTERVAL '1 day',
             CURRENT_DATE,
             INTERVAL '1 day'
-        ) as d(day)
-        LEFT JOIN sales s ON s.created_at::date = d.day AND s.is_canceled = false
-        LEFT JOIN sale_items si ON s.id = si.sale_id
-        LEFT JOIN products p ON si.product_id = p.id
-        GROUP BY d.day
-        ORDER BY d.day ASC`
+        )::date as day
+    ),
+    daily_sales AS (
+        -- Агрегируем продажи строго по дням, чтобы избежать дублирования строк
+        SELECT 
+            s.created_at::date as sale_date,
+            SUM(s.total_amount) as total_revenue,
+            COUNT(s.id) as sales_count,
+            SUM(i.profit_per_sale) as total_profit
+        FROM sales s
+        LEFT JOIN (
+            -- Считаем профит по каждой позиции, сгруппировав по sale_id
+            SELECT 
+                si.sale_id,
+                SUM(si.quantity * (si.price_at_sale - p.buy_price)) as profit_per_sale
+            FROM sale_items si
+            JOIN products p ON si.product_id = p.id
+            GROUP BY si.sale_id
+        ) i ON s.id = i.sale_id
+        WHERE s.is_canceled = false
+        GROUP BY s.created_at::date
+    )
+    -- Соединяем календарь с реальными продажами, заменяя NULL на 0
+    SELECT 
+        TO_CHAR(ds.day, 'DD.MM') as date,
+        COALESCE(ds_val.total_revenue, 0) as revenue,
+        COALESCE(ds_val.total_profit, 0) as profit,
+        COALESCE(ds_val.sales_count, 0) as count
+    FROM daily_series ds
+    LEFT JOIN daily_sales ds_val ON ds.day = ds_val.sale_date
+    ORDER BY ds.day ASC`
 
 	rows, err := r.db.Query(ctx, query, days)
 	if err != nil {
@@ -266,7 +288,7 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, days int) ([]domain.
 	for rows.Next() {
 		var d domain.SaleByDay
 		if err := rows.Scan(&d.Date, &d.Revenue, &d.Profit, &d.Count); err != nil {
-			continue
+			return nil, fmt.Errorf("scan sales by day row: %w", err)
 		}
 		result = append(result, d)
 	}
