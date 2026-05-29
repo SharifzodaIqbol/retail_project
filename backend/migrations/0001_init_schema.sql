@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
     username      VARCHAR(100) UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     role          VARCHAR(20) NOT NULL DEFAULT 'seller', -- 'owner' | 'seller'
-    tg_chat_id    BIGINT,
+    tg_chat_id    BIGINT UNIQUE,
     created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 

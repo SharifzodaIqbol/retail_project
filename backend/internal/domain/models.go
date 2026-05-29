@@ -14,6 +14,19 @@ type RegisterCompanyRequest struct {
 	CompanyName string `json:"company_name" binding:"required"`
 	Username    string `json:"username" binding:"required"`
 	Password    string `json:"password" binding:"required"`
+	DeviceID    string `json:"device_id"`
+	Phone       string `json:"phone"`
+}
+type TrialDeniedReason string
+
+const (
+	TrialDeniedDevice TrialDeniedReason = "device_already_used"
+	TrialDeniedPhone  TrialDeniedReason = "phone_already_used"
+)
+
+type TrialCheckResult struct {
+	Allowed bool
+	Reason  TrialDeniedReason
 }
 type Product struct {
 	ID        int     `json:"id"`

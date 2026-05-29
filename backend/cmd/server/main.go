@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -63,7 +64,6 @@ func main() {
 	r := gin.Default()
 	r.Use(middleware.CorsMiddleware())
 	r.POST("/register", func(c *gin.Context) {
-		log.Println("=== ЗАПРОС ДОШЕЛ ДО БЭКЕНДА! ===")
 		var req domain.RegisterCompanyRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -76,12 +76,28 @@ func main() {
 			return
 		}
 
-		err = companyRepo.RegisterNewBusiness(context.Background(), req.CompanyName, req.Username, hash)
+		err = companyRepo.RegisterNewBusiness(
+			context.Background(),
+			req.CompanyName, req.Username, hash,
+			req.DeviceID, req.Phone,
+		)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Логин уже занят или ошибка БД"})
+			// Проверяем тип ошибки — если это фрод, возвращаем 409
+			var trialErr *repository.TrialNotAllowedError
+			if errors.As(err, &trialErr) {
+				c.JSON(http.StatusConflict, gin.H{
+					"error":  "trial_not_allowed",
+					"reason": trialErr.Reason,
+					// Не говорим "устройство найдено" — просто предлагаем купить
+					"message": "Пробный период для этого устройства уже был использован. Свяжитесь с нами для подключения.",
+				})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Логин занят или ошибка БД"})
 			return
 		}
-		c.JSON(http.StatusCreated, gin.H{"status": "success", "message": "Бизнес успешно зарегистрирован!"})
+
+		c.JSON(http.StatusCreated, gin.H{"status": "success"})
 	})
 	// ─── Авторизация ───────────────────────────────────────────────────────────
 	r.POST("/login", func(c *gin.Context) {
