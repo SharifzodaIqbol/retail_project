@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:retail_app/device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
 
@@ -36,13 +37,14 @@ class AuthService {
     String password,
   ) async {
     try {
+      final deviceId = await DeviceService.getDeviceId();
       final url = '${ApiService.baseUrl}/register';
 
-      // Явно создаем Map с правильными ключами snake_case, как в Go
       final Map<String, String> requestBody = {
         'company_name': companyName,
         'username': username,
         'password': password,
+        'device_id': deviceId,
       };
 
       final response = await http
