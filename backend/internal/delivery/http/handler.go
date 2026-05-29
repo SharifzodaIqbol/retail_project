@@ -1,1 +1,92 @@
 package http
+
+import (
+	"os"
+	"retail-managment-system/internal/middleware"
+	"retail-managment-system/internal/repository"
+	"retail-managment-system/internal/delivery/telegram"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type Handler struct {
+	productRepo *repository.ProductRepository
+	saleRepo    *repository.SaleRepository
+	userRepo    *repository.UserRepository
+	companyRepo *repository.CompanyRepository
+	tgBot       *telegram.Bot
+	dbPool      *pgxpool.Pool // нужен для кастомных SQL-запросов вроде отмены чека
+}
+
+func NewHandler(
+	productRepo *repository.ProductRepository,
+	saleRepo *repository.SaleRepository,
+	userRepo *repository.UserRepository,
+	companyRepo *repository.CompanyRepository,
+	tgBot *telegram.Bot,
+	dbPool *pgxpool.Pool,
+) *Handler {
+	return &Handler{
+		productRepo: productRepo,
+		saleRepo:    saleRepo,
+		userRepo:    userRepo,
+		companyRepo: companyRepo,
+		tgBot:       tgBot,
+		dbPool:      dbPool,
+	}
+}
+
+// InitRoutes регистрирует все роуты, перенесённые из main.go
+func (h *Handler) InitRoutes() *gin.Engine {
+	r := gin.Default()
+	r.Use(middleware.CorsMiddleware())
+
+	// Публичные роуты
+	r.POST("/register", h.register)
+	r.POST("/login", h.login)
+
+	// Защищённые роуты
+	api := r.Group("/api")
+	api.Use(middleware.AuthMiddleware(os.Getenv("JWT_SECRET")))
+	api.Use(middleware.SubscriptionMiddleware(h.dbPool))
+	{
+		// Товары
+		api.GET("/products/search", h.searchProducts)
+		api.GET("/products/:barcode", h.getProductByBarcode)
+		api.GET("/products", h.getAllProducts)
+		api.POST("/products", h.createProduct)
+		api.PATCH("/products/:id/inventory", h.updateInventory)
+		api.DELETE("/products/:id", h.deleteProduct)
+
+		// Продажи
+		sales := api.Group("/sales")
+		{
+			sales.POST("", h.executeSale)
+			sales.GET("", h.getSalesHistory)
+			sales.POST("/cancel", h.cancelSale)
+		}
+
+		// Аналитика (только owner)
+		analytics := api.Group("/analytics")
+		analytics.Use(middleware.RoleMiddleware("owner"))
+		{
+			analytics.GET("/summary", h.getAnalyticsSummary)
+			analytics.GET("/top-products", h.getTopProducts)
+			analytics.GET("/sales-by-day", h.getSalesByDay)
+			analytics.GET("/low-stock", h.getLowStock)
+			analytics.GET("/sellers", h.getSellerStats)
+		}
+
+		// Пользователи (только owner)
+		users := api.Group("/users")
+		users.Use(middleware.RoleMiddleware("owner"))
+		{
+			users.GET("", h.getAllUsers)
+			users.POST("", h.createUser)
+			users.DELETE("/:id", h.deleteUser)
+		}
+	}
+
+	return r
+}
