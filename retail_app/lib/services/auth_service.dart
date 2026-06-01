@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:retail_app/device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:retail_app/helpers/device_info_helper.dart';
 import 'api_service.dart';
 
 class AuthService {
@@ -37,7 +37,7 @@ class AuthService {
     String password,
   ) async {
     try {
-      final deviceId = await DeviceService.getDeviceId();
+      final deviceId = await DeviceInfoHelper.getDeviceId();
       final url = '${ApiService.baseUrl}/register';
 
       final Map<String, String> requestBody = {

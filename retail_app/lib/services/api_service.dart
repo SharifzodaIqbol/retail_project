@@ -98,8 +98,8 @@ class ApiService {
     double buyPrice,
   ) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/api/products/update-inventory'),
+      final response = await http.patch(
+        Uri.parse('$baseUrl/api/products/$id/inventory'),
         headers: await _getHeaders(),
         body: jsonEncode({
           'id': id,

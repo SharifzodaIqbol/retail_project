@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/product.dart';
 import '../services/api_service.dart';
-import '../widgets/barcode_scanner.dart';
 
 class InventoryScreen extends StatefulWidget {
   const InventoryScreen({super.key});
