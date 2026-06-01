@@ -2,9 +2,9 @@ package http
 
 import (
 	"os"
+	"retail-managment-system/internal/delivery/telegram"
 	"retail-managment-system/internal/middleware"
 	"retail-managment-system/internal/repository"
-	"retail-managment-system/internal/delivery/telegram"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -64,7 +64,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 		{
 			sales.POST("", h.executeSale)
 			sales.GET("", h.getSalesHistory)
-			sales.POST("/cancel", h.cancelSale)
+			sales.POST("/:id/cancel", h.cancelSale)
 		}
 
 		// Аналитика (только owner)

@@ -117,3 +117,12 @@ func (r *ProductRepository) SoftDelete(ctx context.Context, id int) error {
 	_, err := r.db.Exec(ctx, "UPDATE products SET is_active = false WHERE id = $1", id)
 	return err
 }
+func (r *ProductRepository) GetNameByID(ctx context.Context, id int) (string, error) {
+	query := `SELECT name FROM products WHERE id = $1`
+	var name string
+	err := r.db.QueryRow(ctx, query, id).Scan(&name)
+	if err != nil{
+		return "", err
+	}
+	return name, nil
+}

@@ -50,7 +50,7 @@ func (h *Handler) createProduct(c *gin.Context) {
 func (h *Handler) updateInventory(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	var input struct {
-		Amount    int     `json:"amount"`
+		AddStock  int     `json:"add_stock"`
 		SellPrice float64 `json:"sell_price"`
 		BuyPrice  float64 `json:"buy_price"`
 	}
@@ -58,7 +58,7 @@ func (h *Handler) updateInventory(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "Неверный формат данных"})
 		return
 	}
-	if err := h.productRepo.UpdateInventory(context.Background(), id, input.Amount, input.SellPrice, input.BuyPrice); err != nil {
+	if err := h.productRepo.UpdateInventory(context.Background(), id, input.AddStock, input.SellPrice, input.BuyPrice); err != nil {
 		c.JSON(500, gin.H{"error": "Не удалось обновить склад"})
 		return
 	}
