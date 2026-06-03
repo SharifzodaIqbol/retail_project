@@ -4,7 +4,7 @@ class Product {
   final String barcode;
   final double buyPrice;
   final double sellPrice;
-  final int stock;
+  int stock;
 
   Product({
     required this.id,
