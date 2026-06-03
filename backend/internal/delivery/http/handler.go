@@ -37,7 +37,7 @@ func NewHandler(
 	}
 }
 
-// InitRoutes регистрирует все роуты, перенесённые из main.go
+// InitRoutes регистрирует все роуты
 func (h *Handler) InitRoutes() *gin.Engine {
 	r := gin.Default()
 	r.Use(middleware.CorsMiddleware())
@@ -45,6 +45,12 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	// Публичные роуты
 	r.POST("/register", h.register)
 	r.POST("/login", h.login)
+
+	// ─── Терминальный режим (публичные, без JWT) ───────────────────────────────
+	// Получить список сотрудников для экрана выбора сотрудника
+	r.GET("/terminal/users", h.getTerminalUsers)
+	// Войти через PIN (возвращает JWT)
+	r.POST("/terminal/pin-login", h.pinLogin)
 
 	// Защищённые роуты
 	api := r.Group("/api")
@@ -85,6 +91,18 @@ func (h *Handler) InitRoutes() *gin.Engine {
 			users.GET("", h.getAllUsers)
 			users.POST("", h.createUser)
 			users.DELETE("/:id", h.deleteUser)
+			// Установить / изменить PIN сотруднику
+			users.PUT("/:id/pin", h.setUserPin)
+		}
+
+		// Telegram привязка (только owner)
+		tg := api.Group("/telegram")
+		tg.Use(middleware.RoleMiddleware("owner"))
+		{
+			// Сгенерировать одноразовый токен → deeplink для привязки
+			tg.POST("/link-token", h.generateTgLinkToken)
+			// Отвязать Telegram
+			tg.DELETE("/link", h.unlinkTelegram)
 		}
 	}
 

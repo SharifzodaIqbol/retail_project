@@ -61,13 +61,40 @@ type User struct {
 	CompanyID    int    `json:"company_id"`
 	Username     string `json:"username"`
 	PasswordHash string `json:"-"`
+	PinHash      string `json:"-"`
 	Role         string `json:"role"`
 	TgChatID     int64  `json:"tg_chat_id"`
+	HasPin       bool   `json:"has_pin"` // только для UI: есть ли PIN
 }
 
 type LoginRequest struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
+}
+
+// PinLoginRequest — вход продавца через PIN в терминальном режиме
+type PinLoginRequest struct {
+	UserID int    `json:"user_id" binding:"required"`
+	Pin    string `json:"pin" binding:"required"`
+}
+
+// SetPinRequest — установка PIN для сотрудника
+type SetPinRequest struct {
+	Pin string `json:"pin" binding:"required"`
+}
+
+// CreateUserRequest — создание сотрудника с опциональным PIN
+type CreateUserRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+	Role     string `json:"role" binding:"required"`
+	Pin      string `json:"pin"` // необязательный, 4 цифры
+}
+
+// TgLinkTokenResponse — ответ с токеном для привязки Telegram
+type TgLinkTokenResponse struct {
+	Token   string `json:"token"`
+	BotName string `json:"bot_name"`
 }
 
 type DailyStats struct {
