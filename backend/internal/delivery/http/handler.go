@@ -15,8 +15,9 @@ type Handler struct {
 	saleRepo    *repository.SaleRepository
 	userRepo    *repository.UserRepository
 	companyRepo *repository.CompanyRepository
+	shopRepo    *repository.ShopRepository
 	tgBot       *telegram.Bot
-	dbPool      *pgxpool.Pool // нужен для кастомных SQL-запросов вроде отмены чека
+	dbPool      *pgxpool.Pool
 }
 
 func NewHandler(
@@ -24,6 +25,7 @@ func NewHandler(
 	saleRepo *repository.SaleRepository,
 	userRepo *repository.UserRepository,
 	companyRepo *repository.CompanyRepository,
+	shopRepo *repository.ShopRepository,
 	tgBot *telegram.Bot,
 	dbPool *pgxpool.Pool,
 ) *Handler {
@@ -32,6 +34,7 @@ func NewHandler(
 		saleRepo:    saleRepo,
 		userRepo:    userRepo,
 		companyRepo: companyRepo,
+		shopRepo:    shopRepo,
 		tgBot:       tgBot,
 		dbPool:      dbPool,
 	}
@@ -47,9 +50,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	r.POST("/login", h.login)
 
 	// ─── Терминальный режим (публичные, без JWT) ───────────────────────────────
-	// Получить список сотрудников для экрана выбора сотрудника
 	r.GET("/terminal/users", h.getTerminalUsers)
-	// Войти через PIN (возвращает JWT)
 	r.POST("/terminal/pin-login", h.pinLogin)
 
 	// Защищённые роуты
@@ -91,17 +92,24 @@ func (h *Handler) InitRoutes() *gin.Engine {
 			users.GET("", h.getAllUsers)
 			users.POST("", h.createUser)
 			users.DELETE("/:id", h.deleteUser)
-			// Установить / изменить PIN сотруднику
 			users.PUT("/:id/pin", h.setUserPin)
+		}
+
+		// Магазины (только owner) — задача #2
+		shops := api.Group("/shops")
+		shops.Use(middleware.RoleMiddleware("owner"))
+		{
+			shops.GET("", h.getShops)
+			shops.POST("", h.createShop)
+			shops.PUT("/:id", h.updateShop)
+			shops.DELETE("/:id", h.deleteShop)
 		}
 
 		// Telegram привязка (только owner)
 		tg := api.Group("/telegram")
 		tg.Use(middleware.RoleMiddleware("owner"))
 		{
-			// Сгенерировать одноразовый токен → deeplink для привязки
 			tg.POST("/link-token", h.generateTgLinkToken)
-			// Отвязать Telegram
 			tg.DELETE("/link", h.unlinkTelegram)
 		}
 	}

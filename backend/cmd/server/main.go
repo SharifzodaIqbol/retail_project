@@ -29,6 +29,7 @@ func main() {
 	saleRepo := repository.NewSaleRepository(dbPool)
 	userRepo := repository.NewUserRepository(dbPool)
 	companyRepo := repository.NewCompanyRepository(dbPool)
+	shopRepo := repository.NewShopRepository(dbPool) // #2: магазины
 
 	tgBot, err := telegram.NewBot(os.Getenv("TELEGRAM_APITOKEN"))
 	if err != nil {
@@ -36,9 +37,9 @@ func main() {
 	}
 	go tgBot.Start(saleRepo, userRepo, productRepo)
 
-	// Ежедневный отчет в 21:00
 	go startDailyReportScheduler(saleRepo, userRepo, tgBot)
-	handler := http.NewHandler(productRepo, saleRepo, userRepo, companyRepo, tgBot, dbPool)
+
+	handler := http.NewHandler(productRepo, saleRepo, userRepo, companyRepo, shopRepo, tgBot, dbPool)
 	router := handler.InitRoutes()
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -47,6 +48,7 @@ func main() {
 	log.Printf("Сервер запущен на порту %s", port)
 	router.Run(":" + port)
 }
+
 func startDailyReportScheduler(saleRepo *repository.SaleRepository, userRepo *repository.UserRepository, tgBot *telegram.Bot) {
 	log.Println("Планировщик отчетов запущен...")
 	for {

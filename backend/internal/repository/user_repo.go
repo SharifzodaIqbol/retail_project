@@ -18,9 +18,11 @@ func NewUserRepository(db *pgxpool.Pool) *UserRepository {
 	return &UserRepository{db: db}
 }
 
+// GetByUsername — ищет пользователя глобально (для логина owner'а).
+// Возвращает ТОЛЬКО owner'ов — продавцы через логин/пароль не входят.
 func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
 	var u domain.User
-	query := `SELECT id, company_id, username, password_hash, role FROM users WHERE username = $1`
+	query := `SELECT id, company_id, username, password_hash, role FROM users WHERE username = $1 AND role = 'owner'`
 	err := r.db.QueryRow(ctx, query, username).Scan(&u.ID, &u.CompanyID, &u.Username, &u.PasswordHash, &u.Role)
 	return &u, err
 }
@@ -96,71 +98,87 @@ func (r *UserRepository) Create(ctx context.Context, u domain.User) error {
 	return err
 }
 
-// CreateWithPin — создание пользователя сразу с PIN
+// CreateWithPin — создание пользователя сразу с PIN (без пароля для seller'а)
 func (r *UserRepository) CreateWithPin(ctx context.Context, u domain.User) error {
 	query := `INSERT INTO users (username, password_hash, pin_hash, role, company_id) VALUES ($1, $2, $3, $4, $5)`
 	_, err := r.db.Exec(ctx, query, u.Username, u.PasswordHash, u.PinHash, u.Role, u.CompanyID)
 	return err
 }
 
-func (r *UserRepository) Delete(ctx context.Context, id int) error {
-	_, err := r.db.Exec(ctx, "DELETE FROM users WHERE id = $1", id)
+// CreateSeller — создание продавца без пароля (только PIN)
+func (r *UserRepository) CreateSeller(ctx context.Context, u domain.User) error {
+	query := `INSERT INTO users (username, password_hash, pin_hash, role, company_id) VALUES ($1, '', $2, $3, $4)`
+	_, err := r.db.Exec(ctx, query, u.Username, u.PinHash, u.Role, u.CompanyID)
 	return err
 }
 
-// SetPin — установить/обновить PIN для конкретного пользователя
+func (r *UserRepository) Delete(ctx context.Context, id int) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
+	return err
+}
+
+func (r *UserRepository) GetPinHash(ctx context.Context, userID int) (string, error) {
+	var pinHash string
+	err := r.db.QueryRow(ctx, `SELECT COALESCE(pin_hash, '') FROM users WHERE id = $1`, userID).Scan(&pinHash)
+	return pinHash, err
+}
+
 func (r *UserRepository) SetPin(ctx context.Context, userID int, pinHash string) error {
 	_, err := r.db.Exec(ctx, `UPDATE users SET pin_hash = $1 WHERE id = $2`, pinHash, userID)
 	return err
 }
 
-// GetPinHash — получить pin_hash пользователя по его ID (для проверки при входе)
-func (r *UserRepository) GetPinHash(ctx context.Context, userID int) (string, error) {
-	var pinHash string
-	err := r.db.QueryRow(ctx, `SELECT COALESCE(pin_hash,'') FROM users WHERE id = $1`, userID).Scan(&pinHash)
-	return pinHash, err
+func (r *UserRepository) GenerateTgLinkToken(ctx context.Context, userID int) (string, error) {
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(b)
+	expiresAt := time.Now().Add(10 * time.Minute)
+	_, err = r.db.Exec(ctx,
+		`UPDATE users SET tg_link_token = $1, tg_link_token_expires_at = $2 WHERE id = $3`,
+		token, expiresAt, userID,
+	)
+	return token, err
 }
 
-func (r *UserRepository) UpdateChatID(ctx context.Context, username string, chatID int64) error {
-	query := `UPDATE users SET tg_chat_id = $1 WHERE username = $2`
-	_, err := r.db.Exec(ctx, query, chatID, username)
+func (r *UserRepository) GetByTgLinkToken(ctx context.Context, token string) (*domain.User, error) {
+	var u domain.User
+	err := r.db.QueryRow(ctx,
+		`SELECT id, company_id, username, role FROM users WHERE tg_link_token = $1 AND tg_link_token_expires_at > NOW()`,
+		token,
+	).Scan(&u.ID, &u.CompanyID, &u.Username, &u.Role)
+	return &u, err
+}
+
+func (r *UserRepository) SetTgChatID(ctx context.Context, userID int, chatID int64) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE users SET tg_chat_id = $1, tg_link_token = NULL, tg_link_token_expires_at = NULL WHERE id = $2`,
+		chatID, userID,
+	)
 	return err
 }
 
-func (r *UserRepository) GetByChatID(ctx context.Context, chatID int64) (domain.User, error) {
-	var user domain.User
-	query := `SELECT id, username, role, tg_chat_id FROM users WHERE tg_chat_id = $1`
-	err := r.db.QueryRow(ctx, query, chatID).Scan(&user.ID, &user.Username, &user.Role, &user.TgChatID)
-	return user, err
+func (r *UserRepository) InvalidateTgLink(ctx context.Context, userID int) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE users SET tg_chat_id = NULL, tg_link_token = NULL, tg_link_token_expires_at = NULL WHERE id = $1`,
+		userID,
+	)
+	return err
 }
-
 func (r *UserRepository) GetOwnerChatID(ctx context.Context) (int64, error) {
 	var chatID int64
 	query := `SELECT tg_chat_id FROM users WHERE role = 'owner' AND tg_chat_id IS NOT NULL LIMIT 1`
 	err := r.db.QueryRow(ctx, query).Scan(&chatID)
 	return chatID, err
 }
-
-// GenerateTgLinkToken — создаёт одноразовый токен для привязки Telegram из приложения.
-// Токен живёт 10 минут. Возвращает сгенерированный токен.
-func (r *UserRepository) GenerateTgLinkToken(ctx context.Context, userID int) (string, error) {
-	raw := make([]byte, 24)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	token := hex.EncodeToString(raw)
-
-	_, err := r.db.Exec(ctx,
-		`UPDATE users SET tg_link_token = $1, tg_link_token_at = NOW() WHERE id = $2`,
-		token, userID,
-	)
-	if err != nil {
-		return "", err
-	}
-	return token, nil
+func (r *UserRepository) GetByChatID(ctx context.Context, chatID int64) (domain.User, error) {
+	var user domain.User
+	query := `SELECT id, username, role, tg_chat_id FROM users WHERE tg_chat_id = $1`
+	err := r.db.QueryRow(ctx, query, chatID).Scan(&user.ID, &user.Username, &user.Role, &user.TgChatID)
+	return user, err
 }
-
-// ClaimTgLinkToken — проверяет токен (TTL 10 мин), привязывает chatID и сбрасывает токен.
 func (r *UserRepository) ClaimTgLinkToken(ctx context.Context, token string, chatID int64) (*domain.User, error) {
 	var u domain.User
 	query := `
@@ -176,36 +194,4 @@ func (r *UserRepository) ClaimTgLinkToken(ctx context.Context, token string, cha
 		return nil, err
 	}
 	return &u, nil
-}
-
-// GetOwnerByCompany — возвращает владельца компании (нужен для Telegram уведомлений)
-func (r *UserRepository) GetOwnerByCompany(ctx context.Context, companyID int) (*domain.User, error) {
-	var u domain.User
-	query := `SELECT id, username, COALESCE(tg_chat_id, 0) FROM users WHERE company_id = $1 AND role = 'owner' LIMIT 1`
-	err := r.db.QueryRow(ctx, query, companyID).Scan(&u.ID, &u.Username, &u.TgChatID)
-	return &u, err
-}
-
-// InvalidateTgLink — отвязывает Telegram от пользователя
-func (r *UserRepository) InvalidateTgLink(ctx context.Context, userID int) error {
-	_, err := r.db.Exec(ctx,
-		`UPDATE users SET tg_chat_id = NULL, tg_link_token = NULL, tg_link_token_at = NULL WHERE id = $1`,
-		userID,
-	)
-	return err
-}
-
-// GetTgLinkTokenAge — вспомогательный: проверяет, сколько секунд осталось до истечения токена
-func (r *UserRepository) GetTgLinkTokenAge(ctx context.Context, userID int) (time.Duration, error) {
-	var tokenAt *time.Time
-	err := r.db.QueryRow(ctx, `SELECT tg_link_token_at FROM users WHERE id = $1`, userID).Scan(&tokenAt)
-	if err != nil || tokenAt == nil {
-		return 0, err
-	}
-	expires := tokenAt.Add(10 * time.Minute)
-	remaining := time.Until(expires)
-	if remaining < 0 {
-		return 0, nil
-	}
-	return remaining, nil
 }

@@ -10,6 +10,14 @@ type Company struct {
 	IsPaid      bool      `json:"is_paid"`
 	CreatedAt   time.Time `json:"created_at"`
 }
+
+// Shop — один магазин внутри компании (задача #2)
+type Shop struct {
+	ID        int    `json:"id"`
+	CompanyID int    `json:"company_id"`
+	Name      string `json:"name"`
+}
+
 type RegisterCompanyRequest struct {
 	CompanyName string `json:"company_name" binding:"required"`
 	Username    string `json:"username" binding:"required"`
@@ -31,6 +39,7 @@ type TrialCheckResult struct {
 type Product struct {
 	ID        int     `json:"id"`
 	CompanyID int     `json:"company_id"`
+	ShopID    int     `json:"shop_id,omitempty"`
 	Name      string  `json:"name"`
 	Barcode   string  `json:"barcode"`
 	BuyPrice  float64 `json:"buy_price"`
@@ -83,12 +92,18 @@ type SetPinRequest struct {
 	Pin string `json:"pin" binding:"required"`
 }
 
-// CreateUserRequest — создание сотрудника с опциональным PIN
+// CreateUserRequest — создание сотрудника.
+// Для seller'ов пароль не нужен — они входят только через PIN.
 type CreateUserRequest struct {
 	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Password string `json:"password"` // обязателен только для owner, для seller — пустой
 	Role     string `json:"role" binding:"required"`
-	Pin      string `json:"pin"` // необязательный, 4 цифры
+	Pin      string `json:"pin"` // необязательный для seller, 4 цифры
+}
+
+// CreateShopRequest — создать новый магазин внутри компании
+type CreateShopRequest struct {
+	Name string `json:"name" binding:"required"`
 }
 
 // TgLinkTokenResponse — ответ с токеном для привязки Telegram
@@ -101,8 +116,6 @@ type DailyStats struct {
 	Total float64 `json:"total"`
 	Count int     `json:"count"`
 }
-
-// НОВЫЕ типы для аналитики
 
 type PeriodSummary struct {
 	Revenue    float64 `json:"revenue"`

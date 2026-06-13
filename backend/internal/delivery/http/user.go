@@ -23,7 +23,8 @@ func (h *Handler) getAllUsers(c *gin.Context) {
 	c.JSON(200, list)
 }
 
-// createUser — создание сотрудника (с опциональным PIN)
+// createUser — создание сотрудника.
+// Для seller'ов пароль не требуется — они входят только через PIN.
 func (h *Handler) createUser(c *gin.Context) {
 	var req domain.CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -38,17 +39,18 @@ func (h *Handler) createUser(c *gin.Context) {
 		return
 	}
 
-	hash, _ := auth.HashPassword(req.Password)
-
 	user := domain.User{
-		Username:     req.Username,
-		PasswordHash: hash,
-		Role:         req.Role,
-		CompanyID:    ownerCompanyID.(int),
+		Username:  req.Username,
+		Role:      req.Role,
+		CompanyID: ownerCompanyID.(int),
 	}
 
-	// Если PIN передан — хэшируем его тоже
-	if req.Pin != "" {
+	// Для seller'а — пароль не нужен, только PIN
+	if req.Role == "seller" {
+		if req.Pin == "" {
+			c.JSON(400, gin.H{"error": "PIN обязателен для продавца (4 цифры)"})
+			return
+		}
 		if len(req.Pin) != 4 {
 			c.JSON(400, gin.H{"error": "PIN должен быть 4 цифры"})
 			return
@@ -59,14 +61,39 @@ func (h *Handler) createUser(c *gin.Context) {
 			return
 		}
 		user.PinHash = pinHash
-		if err := h.userRepo.CreateWithPin(context.Background(), user); err != nil {
-			c.JSON(500, gin.H{"error": "Ошибка создания пользователя"})
+		if err := h.userRepo.CreateSeller(context.Background(), user); err != nil {
+			c.JSON(500, gin.H{"error": "Ошибка создания продавца"})
 			return
 		}
 	} else {
-		if err := h.userRepo.Create(context.Background(), user); err != nil {
-			c.JSON(500, gin.H{"error": "Ошибка создания пользователя"})
+		// Для owner (или других ролей) — пароль обязателен
+		if req.Password == "" {
+			c.JSON(400, gin.H{"error": "Пароль обязателен"})
 			return
+		}
+		hash, _ := auth.HashPassword(req.Password)
+		user.PasswordHash = hash
+
+		if req.Pin != "" {
+			if len(req.Pin) != 4 {
+				c.JSON(400, gin.H{"error": "PIN должен быть 4 цифры"})
+				return
+			}
+			pinHash, err := auth.HashPassword(req.Pin)
+			if err != nil {
+				c.JSON(500, gin.H{"error": "Ошибка хэширования PIN"})
+				return
+			}
+			user.PinHash = pinHash
+			if err := h.userRepo.CreateWithPin(context.Background(), user); err != nil {
+				c.JSON(500, gin.H{"error": "Ошибка создания пользователя"})
+				return
+			}
+		} else {
+			if err := h.userRepo.Create(context.Background(), user); err != nil {
+				c.JSON(500, gin.H{"error": "Ошибка создания пользователя"})
+				return
+			}
 		}
 	}
 
@@ -97,7 +124,6 @@ func (h *Handler) setUserPin(c *gin.Context) {
 		return
 	}
 
-	// Проверяем, что пользователь принадлежит этой компании
 	companyID, _ := c.Get("company_id")
 	_, err = h.userRepo.GetByIDAndCompany(context.Background(), id, companyID.(int))
 	if err != nil {
@@ -120,7 +146,6 @@ func (h *Handler) setUserPin(c *gin.Context) {
 }
 
 // pinLogin — вход продавца через PIN в режиме терминала.
-// Возвращает короткий JWT (seller-level) без полного пароля.
 func (h *Handler) pinLogin(c *gin.Context) {
 	var req domain.PinLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -139,7 +164,6 @@ func (h *Handler) pinLogin(c *gin.Context) {
 		return
 	}
 
-	// Получаем пользователя для генерации токена
 	user, err := h.userRepo.GetByID(context.Background(), req.UserID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Ошибка получения данных"})
@@ -160,9 +184,7 @@ func (h *Handler) pinLogin(c *gin.Context) {
 	})
 }
 
-// getTerminalUsers — публичный эндпоинт: список пользователей компании для экрана выбора.
-// Требует только company_id (без JWT) — используется в терминальном режиме.
-// Возвращает только id, username, role, has_pin — без чувствительных данных.
+// getTerminalUsers — публичный эндпоинт: список пользователей компании для терминального режима.
 func (h *Handler) getTerminalUsers(c *gin.Context) {
 	companyIDStr := c.Query("company_id")
 	companyID, err := strconv.Atoi(companyIDStr)
@@ -177,7 +199,6 @@ func (h *Handler) getTerminalUsers(c *gin.Context) {
 		return
 	}
 
-	// Возвращаем только безопасные поля
 	type safeUser struct {
 		ID       int    `json:"id"`
 		Username string `json:"username"`
@@ -186,17 +207,20 @@ func (h *Handler) getTerminalUsers(c *gin.Context) {
 	}
 	safe := make([]safeUser, 0, len(list))
 	for _, u := range list {
-		safe = append(safe, safeUser{
-			ID:       u.ID,
-			Username: u.Username,
-			Role:     u.Role,
-			HasPin:   u.HasPin,
-		})
+		// В терминальном режиме показываем только seller'ов с PIN
+		if u.Role == "seller" && u.HasPin {
+			safe = append(safe, safeUser{
+				ID:       u.ID,
+				Username: u.Username,
+				Role:     u.Role,
+				HasPin:   u.HasPin,
+			})
+		}
 	}
 	c.JSON(200, safe)
 }
 
-// generateTgLinkToken — хозяин запрашивает токен для привязки Telegram прямо из приложения
+// generateTgLinkToken — хозяин запрашивает токен для привязки Telegram
 func (h *Handler) generateTgLinkToken(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -210,7 +234,7 @@ func (h *Handler) generateTgLinkToken(c *gin.Context) {
 		return
 	}
 
-	botName := os.Getenv("TELEGRAM_BOT_NAME") // например: "MyRetailBot"
+	botName := os.Getenv("TELEGRAM_BOT_NAME")
 	c.JSON(200, domain.TgLinkTokenResponse{
 		Token:   token,
 		BotName: botName,
