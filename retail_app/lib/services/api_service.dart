@@ -409,4 +409,61 @@ class ApiService {
       return null;
     }
   }
+
+  // ─── Магазины (#2) ────────────────────────────────────────────────────────
+
+  Future<List<dynamic>> getShops() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$baseUrl/api/shops'), headers: await _getHeaders())
+          .timeout(const Duration(seconds: 10));
+      _checkSubscription(response.statusCode);
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>?> createShop(String name) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/shops'),
+        headers: await _getHeaders(),
+        body: jsonEncode({'name': name}),
+      );
+      _checkSubscription(response.statusCode);
+      if (response.statusCode == 201) return jsonDecode(response.body);
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<bool> updateShop(int id, String name) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/shops/$id'),
+        headers: await _getHeaders(),
+        body: jsonEncode({'name': name}),
+      );
+      _checkSubscription(response.statusCode);
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<bool> deleteShop(int id) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/shops/$id'),
+        headers: await _getHeaders(),
+      );
+      _checkSubscription(response.statusCode);
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
 }

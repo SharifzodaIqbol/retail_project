@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
+import 'shops_screen.dart';
 
 /// Панель владельца: управление сотрудниками, PIN, Telegram, терминальный режим
 class OwnerPanelScreen extends StatefulWidget {
@@ -246,28 +247,26 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
 
   void _showAddUserDialog() {
     final usernameCtrl = TextEditingController();
-    final passwordCtrl = TextEditingController();
     final pinCtrl = TextEditingController();
-    String role = 'seller';
 
     showDialog(
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Новый сотрудник'),
+          title: const Text('Новый продавец'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextField(
-                  controller: usernameCtrl,
-                  decoration: const InputDecoration(labelText: 'Логин', border: OutlineInputBorder()),
+                const Text(
+                  'Продавцы входят только через PIN — пароль не нужен.',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
                 ),
                 const SizedBox(height: 12),
                 TextField(
-                  controller: passwordCtrl,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Пароль', border: OutlineInputBorder()),
+                  controller: usernameCtrl,
+                  decoration: const InputDecoration(labelText: 'Имя продавца', border: OutlineInputBorder()),
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -277,20 +276,10 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                   obscureText: true,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: const InputDecoration(
-                    labelText: 'PIN-код (необязательно)',
-                    hintText: '4 цифры',
+                    labelText: 'PIN-код (4 цифры)',
                     border: OutlineInputBorder(),
+                    helperText: 'Продавец введёт это при входе',
                   ),
-                ),
-                const SizedBox(height: 4),
-                DropdownButtonFormField<String>(
-                  value: role,
-                  decoration: const InputDecoration(labelText: 'Роль', border: OutlineInputBorder()),
-                  items: const [
-                    DropdownMenuItem(value: 'seller', child: Text('Продавец')),
-                    DropdownMenuItem(value: 'owner', child: Text('Владелец')),
-                  ],
-                  onChanged: (v) => setDialogState(() => role = v!),
                 ),
               ],
             ),
@@ -300,19 +289,30 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F6EF7)),
               onPressed: () async {
-                if (usernameCtrl.text.isEmpty || passwordCtrl.text.isEmpty) return;
+                if (usernameCtrl.text.isEmpty) return;
+                if (pinCtrl.text.length != 4) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('PIN должен быть 4 цифры')),
+                  );
+                  return;
+                }
+                // Seller создаётся без пароля, только с PIN
                 final ok = await _api.createUserWithPin(
                   usernameCtrl.text.trim(),
-                  passwordCtrl.text,
-                  role,
-                  pin: pinCtrl.text.isNotEmpty ? pinCtrl.text : null,
+                  '', // пароль пустой для seller'а
+                  'seller',
+                  pin: pinCtrl.text,
                 );
                 if (!mounted) return;
                 if (ok) {
                   Navigator.pop(ctx);
                   _load();
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Сотрудник добавлен!'), backgroundColor: Colors.green),
+                    const SnackBar(content: Text('Продавец добавлен!'), backgroundColor: Colors.green),
+                  );
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Ошибка. Имя уже занято?'), backgroundColor: Colors.red),
                   );
                 }
               },
@@ -366,6 +366,27 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  // ─── Секция: Магазины ──────────────────────────────────
+                  _SectionHeader(title: 'Мои магазины'),
+                  const SizedBox(height: 8),
+                  _ActionCard(
+                    icon: Icons.store,
+                    iconColor: const Color(0xFF22C55E),
+                    title: 'Управление магазинами',
+                    subtitle: 'Добавляйте и переключайтесь между магазинами',
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const ShopsScreen(),
+                        ),
+                      );
+                    },
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                  ),
+
+                  const SizedBox(height: 24),
+
                   // ─── Секция: Режим терминала ───────────────────────────
                   _SectionHeader(title: 'Терминальный режим'),
                   const SizedBox(height: 8),

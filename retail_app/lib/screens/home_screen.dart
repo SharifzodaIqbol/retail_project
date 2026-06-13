@@ -12,8 +12,8 @@ import '../services/api_service.dart';
 import '../services/auth_service.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
-
+  final VoidCallback? onSellerLogout;
+  const HomeScreen({Key? key, this.onSellerLogout}) : super(key: key);
   @override
   _HomeScreenState createState() => _HomeScreenState();
 }
@@ -28,6 +28,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _debounce;
   String _username = '';
   String _scannerBuffer = '';
+  String _role = '';
 
   @override
   void initState() {
@@ -45,8 +46,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadUserInfo() async {
     try {
       final username = await _authService.getUsername() ?? '';
+      final role = await _authService.getRole() ?? '';
       setState(() {
         _username = username;
+        _role = role;
       });
     } catch (e) {
       debugPrint('Ошибка загрузки имени пользователя: $e');
@@ -351,11 +354,21 @@ class _HomeScreenState extends State<HomeScreen> {
                     _requestScannerFocus();
                   },
                 ),
-              IconButton(
-                icon: const Icon(Icons.logout),
-                tooltip: 'Выйти',
-                onPressed: _logout,
-              ),
+              if (_role == 'owner')
+                IconButton(
+                  icon: const Icon(Icons.logout),
+                  tooltip: 'Выход',
+                  onPressed: _logout,
+                ),
+              if (_role == 'seller' && widget.onSellerLogout != null)
+                TextButton.icon(
+                  onPressed: widget.onSellerLogout,
+                  icon: const Icon(Icons.logout, size: 18, color: Colors.red),
+                  label: const Text(
+                    'Выйти',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                ),
             ],
           ),
           body: Column(

@@ -3,17 +3,22 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 
 /// Экран терминального режима.
-/// Хозяин переводит приложение в этот режим — продавцы входят по PIN.
+/// Показывается когда terminal_mode=true и пользователь не залогинен.
+/// Продавцы входят по PIN. Хозяин может вернуться в свою учётку через долгое нажатие.
 class TerminalScreen extends StatefulWidget {
   final int companyId;
   final String companyName;
-  final VoidCallback onExitTerminal; // хозяин вышел из терминального режима
+  /// Продавец успешно вошёл по PIN
+  final void Function(String token, String role, String username) onSellerLogin;
+  /// Хозяин вышел из терминального режима (уже авторизован)
+  final VoidCallback onOwnerExitTerminal;
 
   const TerminalScreen({
     super.key,
     required this.companyId,
     required this.companyName,
-    required this.onExitTerminal,
+    required this.onSellerLogin,
+    required this.onOwnerExitTerminal,
   });
 
   @override
@@ -35,7 +40,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
     setState(() => _loading = true);
     final users = await _api.getTerminalUsers(widget.companyId);
     setState(() {
-      _users = users.where((u) => u['has_pin'] == true).toList();
+      _users = users; // бэкенд уже фильтрует только seller'ов с PIN
       _loading = false;
     });
   }
@@ -49,35 +54,29 @@ class _TerminalScreenState extends State<TerminalScreen> {
         userName: user['username'],
         userId: user['id'],
         onSuccess: (token, role, username) async {
-          // Сохраняем JWT и входим как продавец
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('jwt_token', token);
-          await prefs.setString('user_role', role);
-          await prefs.setString('username', username);
-          await prefs.setBool('terminal_mode', true);
-
           if (!mounted) return;
           Navigator.of(context).pop(); // закрыть sheet
-          Navigator.of(context).pop(); // закрыть terminal screen
-          // Сообщаем main.dart перезагрузить состояние
-          widget.onExitTerminal();
+          widget.onSellerLogin(token, role, username);
         },
       ),
     );
   }
 
+  /// Хозяин хочет вернуться в свой аккаунт — вводит логин/пароль
   Future<void> _exitToOwner() async {
-    // Хозяин хочет вернуться в свой аккаунт — просим ввести пароль
-    final confirmed = await showDialog<bool>(
+    final result = await showDialog<Map<String, dynamic>?>(
       context: context,
-      builder: (ctx) => _OwnerPasswordDialog(
-        onConfirmed: () => Navigator.pop(ctx, true),
-      ),
+      builder: (ctx) => _OwnerPasswordDialog(),
     );
-    if (confirmed == true) {
+
+    if (result != null) {
+      // Сохраняем данные owner'а и выходим из терминала
       final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('jwt_token', result['token']);
+      await prefs.setString('user_role', result['role']);
+      await prefs.setString('username', result['username']);
       await prefs.setBool('terminal_mode', false);
-      widget.onExitTerminal();
+      widget.onOwnerExitTerminal();
     }
   }
 
@@ -116,7 +115,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
                       ),
                     ],
                   ),
-                  // Кнопка выхода для хозяина
+                  // Кнопка выхода для хозяина (долгое нажатие)
                   GestureDetector(
                     onLongPress: _exitToOwner,
                     child: Container(
@@ -166,30 +165,43 @@ class _TerminalScreenState extends State<TerminalScreen> {
                       child: CircularProgressIndicator(color: Colors.white54),
                     )
                   : _users.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'Нет сотрудников с PIN-кодом.\nПопросите владельца установить PIN.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.white54),
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Text(
+                                'Нет сотрудников с PIN-кодом.\nПопросите владельца добавить продавца с PIN.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: Colors.white54),
+                              ),
+                              const SizedBox(height: 16),
+                              TextButton(
+                                onPressed: _loadUsers,
+                                child: const Text('Обновить', style: TextStyle(color: Colors.white38)),
+                              ),
+                            ],
                           ),
                         )
-                      : GridView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            mainAxisSpacing: 16,
-                            crossAxisSpacing: 16,
-                            childAspectRatio: 1.3,
+                      : RefreshIndicator(
+                          onRefresh: _loadUsers,
+                          child: GridView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2,
+                              mainAxisSpacing: 16,
+                              crossAxisSpacing: 16,
+                              childAspectRatio: 1.3,
+                            ),
+                            itemCount: _users.length,
+                            itemBuilder: (context, i) {
+                              final u = _users[i];
+                              return _UserCard(
+                                username: u['username'],
+                                role: u['role'],
+                                onTap: () => _selectUser(u),
+                              );
+                            },
                           ),
-                          itemCount: _users.length,
-                          itemBuilder: (context, i) {
-                            final u = _users[i];
-                            return _UserCard(
-                              username: u['username'],
-                              role: u['role'],
-                              onTap: () => _selectUser(u),
-                            );
-                          },
                         ),
             ),
           ],
@@ -212,33 +224,26 @@ class _UserCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isOwner = role == 'owner';
     return GestureDetector(
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
           color: const Color(0xFF252B45),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isOwner
-                ? const Color(0xFFFFD700).withOpacity(0.4)
-                : Colors.white12,
-          ),
+          border: Border.all(color: Colors.white12),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             CircleAvatar(
               radius: 28,
-              backgroundColor: isOwner
-                  ? const Color(0xFFFFD700).withOpacity(0.15)
-                  : const Color(0xFF4F6EF7).withOpacity(0.2),
+              backgroundColor: const Color(0xFF4F6EF7).withOpacity(0.2),
               child: Text(
                 username.isNotEmpty ? username[0].toUpperCase() : '?',
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w700,
-                  color: isOwner ? const Color(0xFFFFD700) : const Color(0xFF4F6EF7),
+                  color: Color(0xFF4F6EF7),
                 ),
               ),
             ),
@@ -254,12 +259,9 @@ class _UserCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 2),
-            Text(
-              isOwner ? 'Владелец' : 'Продавец',
-              style: TextStyle(
-                color: isOwner ? const Color(0xFFFFD700) : Colors.white38,
-                fontSize: 12,
-              ),
+            const Text(
+              'Продавец',
+              style: TextStyle(color: Colors.white38, fontSize: 12),
             ),
           ],
         ),
@@ -330,7 +332,6 @@ class _PinInputSheetState extends State<_PinInputSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Ручка
           Container(
             width: 40,
             height: 4,
@@ -357,7 +358,6 @@ class _PinInputSheetState extends State<_PinInputSheet> {
 
           const SizedBox(height: 24),
 
-          // Индикатор точек
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(4, (i) {
@@ -389,7 +389,6 @@ class _PinInputSheetState extends State<_PinInputSheet> {
 
           const SizedBox(height: 28),
 
-          // Цифровая клавиатура
           if (_loading)
             const CircularProgressIndicator(color: Color(0xFF4F6EF7))
           else
@@ -437,10 +436,10 @@ class _PinInputSheetState extends State<_PinInputSheet> {
   }
 }
 
-/// Диалог для выхода хозяина из терминального режима
+/// Диалог для выхода хозяина из терминального режима.
+/// Возвращает Map с token/role/username при успехе, null при отмене.
 class _OwnerPasswordDialog extends StatefulWidget {
-  final VoidCallback onConfirmed;
-  const _OwnerPasswordDialog({required this.onConfirmed});
+  const _OwnerPasswordDialog();
 
   @override
   State<_OwnerPasswordDialog> createState() => _OwnerPasswordDialogState();
@@ -464,11 +463,7 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
     );
     if (!mounted) return;
     if (result != null && result['role'] == 'owner') {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('jwt_token', result['token']);
-      await prefs.setString('user_role', result['role']);
-      await prefs.setString('username', result['username']);
-      widget.onConfirmed();
+      Navigator.pop(context, result); // возвращаем данные owner'а
     } else {
       setState(() {
         _error = 'Неверный логин или пароль';
@@ -489,13 +484,14 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
         mainAxisSize: MainAxisSize.min,
         children: [
           const Text(
-            'Введите данные владельца для выхода',
+            'Введите данные владельца',
             style: TextStyle(color: Colors.white54, fontSize: 13),
           ),
           const SizedBox(height: 16),
           TextField(
             controller: _usernameCtrl,
             style: const TextStyle(color: Colors.white),
+            textInputAction: TextInputAction.next,
             decoration: const InputDecoration(
               labelText: 'Логин',
               labelStyle: TextStyle(color: Colors.white54),
@@ -512,6 +508,8 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
             controller: _passwordCtrl,
             obscureText: true,
             style: const TextStyle(color: Colors.white),
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _confirm(),
             decoration: const InputDecoration(
               labelText: 'Пароль',
               labelStyle: TextStyle(color: Colors.white54),
@@ -531,7 +529,7 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.pop(context, null),
           child: const Text('Отмена', style: TextStyle(color: Colors.white54)),
         ),
         ElevatedButton(

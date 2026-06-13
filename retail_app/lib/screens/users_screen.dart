@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
-import '../services/auth_service.dart';
 
 class UsersScreen extends StatefulWidget {
   const UsersScreen({super.key});
@@ -29,9 +28,11 @@ class _UsersScreenState extends State<UsersScreen> {
     });
   }
 
+  /// Диалог добавления сотрудника.
+  /// Продавцы входят ТОЛЬКО через PIN — пароль не нужен.
   void _showAddUserDialog() {
     final usernameCtrl = TextEditingController();
-    final passwordCtrl = TextEditingController();
+    final pinCtrl = TextEditingController();
     String role = 'seller';
 
     showDialog(
@@ -45,20 +46,24 @@ class _UsersScreenState extends State<UsersScreen> {
               TextField(
                 controller: usernameCtrl,
                 decoration: const InputDecoration(
-                  labelText: 'Логин',
+                  labelText: 'Имя сотрудника',
                   border: OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 12),
+              // PIN — обязателен для seller, видим всегда
               TextField(
-                controller: passwordCtrl,
+                controller: pinCtrl,
+                keyboardType: TextInputType.number,
+                maxLength: 4,
                 obscureText: true,
                 decoration: const InputDecoration(
-                  labelText: 'Пароль',
+                  labelText: 'PIN-код (4 цифры)',
                   border: OutlineInputBorder(),
+                  helperText: 'Продавец будет входить через PIN',
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 4),
               DropdownButtonFormField<String>(
                 value: role,
                 decoration: const InputDecoration(
@@ -67,7 +72,6 @@ class _UsersScreenState extends State<UsersScreen> {
                 ),
                 items: const [
                   DropdownMenuItem(value: 'seller', child: Text('Продавец')),
-                  DropdownMenuItem(value: 'owner', child: Text('Владелец')),
                 ],
                 onChanged: (v) => setDialogState(() => role = v!),
               ),
@@ -80,13 +84,19 @@ class _UsersScreenState extends State<UsersScreen> {
             ),
             ElevatedButton(
               onPressed: () async {
-                if (usernameCtrl.text.isEmpty || passwordCtrl.text.isEmpty) {
+                if (usernameCtrl.text.isEmpty) return;
+                if (pinCtrl.text.length != 4) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('PIN должен быть 4 цифры')),
+                  );
                   return;
                 }
-                final ok = await _api.createUser(
+                // Seller создаётся без пароля — только с PIN
+                final ok = await _api.createUserWithPin(
                   usernameCtrl.text.trim(),
-                  passwordCtrl.text,
+                  '', // пароль пустой — бэкенд сам разберётся по роли
                   role,
+                  pin: pinCtrl.text,
                 );
                 if (ok && mounted) {
                   Navigator.pop(context);
@@ -95,6 +105,13 @@ class _UsersScreenState extends State<UsersScreen> {
                     const SnackBar(
                       content: Text('Сотрудник добавлен!'),
                       backgroundColor: Colors.green,
+                    ),
+                  );
+                } else if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Ошибка. Возможно, имя уже занято.'),
+                      backgroundColor: Colors.red,
                     ),
                   );
                 }
@@ -184,6 +201,7 @@ class _UsersScreenState extends State<UsersScreen> {
                         final u = _users[i];
                         final isOwner = u['role'] == 'owner';
                         final hasTg = (u['tg_chat_id'] ?? 0) != 0;
+                        final hasPin = u['has_pin'] == true;
 
                         return Container(
                           padding: const EdgeInsets.all(14),
@@ -234,19 +252,27 @@ class _UsersScreenState extends State<UsersScreen> {
                                             fontSize: 12,
                                           ),
                                         ),
+                                        if (!isOwner) ...[
+                                          const SizedBox(width: 8),
+                                          Icon(
+                                            hasPin ? Icons.pin : Icons.pin_outlined,
+                                            size: 14,
+                                            color: hasPin ? Colors.green : Colors.grey,
+                                          ),
+                                          Text(
+                                            hasPin ? ' PIN ✓' : ' PIN не задан',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: hasPin ? Colors.green : Colors.grey,
+                                            ),
+                                          ),
+                                        ],
                                         if (hasTg) ...[
                                           const SizedBox(width: 8),
                                           const Icon(
                                             Icons.telegram,
                                             size: 14,
                                             color: Color(0xFF0088CC),
-                                          ),
-                                          const Text(
-                                            ' Привязан',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: Color(0xFF0088CC),
-                                            ),
                                           ),
                                         ],
                                       ],
