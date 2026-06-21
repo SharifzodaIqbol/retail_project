@@ -88,8 +88,9 @@ class ApiService {
     int id,
     int addStock,
     double sellPrice,
-    double buyPrice,
-  ) async {
+    double buyPrice, {
+    String? reason,
+  }) async {
     try {
       final response = await http.patch(
         Uri.parse('$baseUrl/api/products/$id/inventory'),
@@ -99,6 +100,7 @@ class ApiService {
           'add_stock': addStock,
           'sell_price': sellPrice,
           'buy_price': buyPrice,
+          if (reason != null && reason.isNotEmpty) 'reason': reason,
         }),
       );
       _checkSubscription(response.statusCode);

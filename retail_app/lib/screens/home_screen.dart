@@ -114,12 +114,13 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    _debounce = Timer(const Duration(milliseconds: 300), () async {
-      if (query.length < 2) {
+    _debounce = Timer(const Duration(milliseconds: 250), () async {
+      if (query.length < 1) {
         setState(() => _suggestions = []);
         return;
       }
       final results = await _apiService.searchProductsByName(query);
+      if (!mounted) return;
       setState(() => _suggestions = results);
     });
   }
