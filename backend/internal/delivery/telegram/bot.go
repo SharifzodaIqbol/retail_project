@@ -167,3 +167,19 @@ func (b *Bot) SendLowStockAlert(chatID int64, productName string, remainingStock
 		productName, remainingStock)
 	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
 }
+
+// SendInventoryChangeNotification — уведомление владельцу, когда продавец
+func (b *Bot) SendInventoryChangeNotification(chatID int64, sellerName, productName string, addStock int, reason string) {
+	sign := "+"
+	if addStock < 0 {
+		sign = ""
+	}
+	if sellerName == "" {
+		sellerName = "Номаълум"
+	}
+	msg := fmt.Sprintf(
+		"📦 **Тағйироти склад**\n👤 Фурушанда: %s\n🏷 Маҳсулот: %s\n🔢 Тағйирот: %s%d дона\n📝 Сабаб: %s",
+		sellerName, productName, sign, addStock, reason,
+	)
+	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
+}

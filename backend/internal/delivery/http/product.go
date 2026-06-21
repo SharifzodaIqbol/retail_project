@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"retail-managment-system/internal/domain"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,11 +21,27 @@ func (h *Handler) getProductByBarcode(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, p)
 }
+
+// searchProducts — поиск по названию для автодополнения в кассе.
+// ИСПРАВЛЕНО: раньше читался параметр "name", а Flutter всегда шлёт "q" —
+// поэтому поиск по названию всегда возвращал пустой список.
+// Также добавлен фильтр по company_id (раньше товары не фильтровались по компании).
 func (h *Handler) searchProducts(c *gin.Context) {
-	name := c.Query("name")
-	products, _ := h.productRepo.SearchByName(context.Background(), name)
-	c.JSON(200, products)
+	companyID := c.MustGet("company_id").(int)
+	name := strings.TrimSpace(c.Query("q"))
+	if name == "" {
+		c.JSON(http.StatusOK, []domain.Product{})
+		return
+	}
+
+	products, err := h.productRepo.SearchByName(context.Background(), companyID, name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка поиска"})
+		return
+	}
+	c.JSON(http.StatusOK, products)
 }
+
 func (h *Handler) getAllProducts(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 	products, err := h.productRepo.GetAll(context.Background(), companyID)
@@ -47,23 +64,57 @@ func (h *Handler) createProduct(c *gin.Context) {
 	}
 	c.JSON(200, gin.H{"status": "ok"})
 }
+
+// updateInventory — обновление склада.
+// НОВОЕ: если изменение делает продавец (role == "seller"), причина обязательна.
+// Склад обновляется сразу, владельцу уходит Telegram-уведомление постфактум.
 func (h *Handler) updateInventory(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
+	role, _ := c.Get("role")
+	companyID := c.MustGet("company_id").(int)
+	userID, _ := c.Get("user_id")
+
 	var input struct {
 		AddStock  int     `json:"add_stock"`
 		SellPrice float64 `json:"sell_price"`
 		BuyPrice  float64 `json:"buy_price"`
+		Reason    string  `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(400, gin.H{"error": "Неверный формат данных"})
 		return
 	}
+
+	isSeller := role == "seller"
+	if isSeller && strings.TrimSpace(input.Reason) == "" {
+		c.JSON(400, gin.H{"error": "Укажите причину изменения склада"})
+		return
+	}
+
 	if err := h.productRepo.UpdateInventory(context.Background(), id, input.AddStock, input.SellPrice, input.BuyPrice); err != nil {
 		c.JSON(500, gin.H{"error": "Не удалось обновить склад"})
 		return
 	}
+
+	if isSeller && h.tgBot != nil {
+		go func() {
+			ctx := context.Background()
+			productName, err := h.productRepo.GetNameByID(ctx, id)
+			if err != nil {
+				return
+			}
+			ownerChatID, err := h.userRepo.GetOwnerChatID(ctx, companyID)
+			if err != nil || ownerChatID == 0 {
+				return
+			}
+			seller, _ := h.userRepo.GetByID(ctx, userID.(int))
+			h.tgBot.SendInventoryChangeNotification(ownerChatID, seller.Username, productName, input.AddStock, input.Reason)
+		}()
+	}
+
 	c.JSON(200, gin.H{"status": "ok"})
 }
+
 func (h *Handler) deleteProduct(c *gin.Context) {
 	role := c.MustGet("role").(string)
 	if role != "owner" {

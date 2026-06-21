@@ -26,7 +26,8 @@ func (h *Handler) executeSale(c *gin.Context) {
 	}
 
 	go func() {
-		ownerID, _ := h.userRepo.GetOwnerChatID(context.Background())
+		companyID := c.MustGet("company_id").(int)
+		ownerID, _ := h.userRepo.GetOwnerChatID(context.Background(), companyID)
 		if ownerID != 0 {
 			for _, item := range lowStockItems {
 				h.tgBot.SendLowStockAlert(ownerID, item.Name, item.Stock)
@@ -66,7 +67,8 @@ func (h *Handler) cancelSale(c *gin.Context) {
 	}
 
 	go func() {
-		ownerID, _ := h.userRepo.GetOwnerChatID(context.Background())
+		companyID := c.MustGet("company_id").(int)
+		ownerID, _ := h.userRepo.GetOwnerChatID(context.Background(), companyID)
 		if ownerID != 0 {
 			h.tgBot.SendCancelNotification(ownerID, id, input.Reason, totalAmount)
 		}

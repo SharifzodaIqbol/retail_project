@@ -10,6 +10,7 @@ import (
 	"retail-managment-system/internal/delivery/telegram"
 	"retail-managment-system/internal/repository"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
@@ -29,7 +30,7 @@ func main() {
 	saleRepo := repository.NewSaleRepository(dbPool)
 	userRepo := repository.NewUserRepository(dbPool)
 	companyRepo := repository.NewCompanyRepository(dbPool)
-	shopRepo := repository.NewShopRepository(dbPool) // #2: магазины
+	shopRepo := repository.NewShopRepository(dbPool)
 
 	tgBot, err := telegram.NewBot(os.Getenv("TELEGRAM_APITOKEN"))
 	if err != nil {
@@ -37,7 +38,7 @@ func main() {
 	}
 	go tgBot.Start(saleRepo, userRepo, productRepo)
 
-	go startDailyReportScheduler(saleRepo, userRepo, tgBot)
+	go startDailyReportScheduler(&gin.Context{}, saleRepo, userRepo, tgBot)
 
 	handler := http.NewHandler(productRepo, saleRepo, userRepo, companyRepo, shopRepo, tgBot, dbPool)
 	router := handler.InitRoutes()
@@ -49,14 +50,15 @@ func main() {
 	router.Run(":" + port)
 }
 
-func startDailyReportScheduler(saleRepo *repository.SaleRepository, userRepo *repository.UserRepository, tgBot *telegram.Bot) {
+func startDailyReportScheduler(c *gin.Context, saleRepo *repository.SaleRepository, userRepo *repository.UserRepository, tgBot *telegram.Bot) {
 	log.Println("Планировщик отчетов запущен...")
 	for {
 		now := time.Now()
 		if now.Hour() == 21 && now.Minute() == 0 {
 			stats, err := saleRepo.GetTodayTotal(context.Background())
 			if err == nil {
-				ownerID, err := userRepo.GetOwnerChatID(context.Background())
+				companyID := c.MustGet("company_id").(int) 
+				ownerID, err := userRepo.GetOwnerChatID(context.Background(), companyID)
 				if err == nil && ownerID != 0 {
 					tgBot.SendDailyReport(ownerID, stats.Total, stats.Count)
 				}

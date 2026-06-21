@@ -167,10 +167,11 @@ func (r *UserRepository) InvalidateTgLink(ctx context.Context, userID int) error
 	)
 	return err
 }
-func (r *UserRepository) GetOwnerChatID(ctx context.Context) (int64, error) {
+
+func (r *UserRepository) GetOwnerChatID(ctx context.Context, companyID int) (int64, error) {
 	var chatID int64
-	query := `SELECT tg_chat_id FROM users WHERE role = 'owner' AND tg_chat_id IS NOT NULL LIMIT 1`
-	err := r.db.QueryRow(ctx, query).Scan(&chatID)
+	query := `SELECT tg_chat_id FROM users WHERE role = 'owner' AND company_id = $1 AND tg_chat_id IS NOT NULL LIMIT 1`
+	err := r.db.QueryRow(ctx, query, companyID).Scan(&chatID)
 	return chatID, err
 }
 func (r *UserRepository) GetByChatID(ctx context.Context, chatID int64) (domain.User, error) {
@@ -183,9 +184,9 @@ func (r *UserRepository) ClaimTgLinkToken(ctx context.Context, token string, cha
 	var u domain.User
 	query := `
 		UPDATE users
-		SET tg_chat_id = $1, tg_link_token = NULL, tg_link_token_at = NULL
+		SET tg_chat_id = $1, tg_link_token = NULL, tg_link_token_expires_at = NULL
 		WHERE tg_link_token = $2
-		  AND tg_link_token_at > NOW() - INTERVAL '10 minutes'
+		  AND tg_link_token_expires_at > NOW()
 		RETURNING id, company_id, username, role
 	`
 	err := r.db.QueryRow(ctx, query, chatID, token).
