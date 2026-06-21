@@ -68,5 +68,17 @@ func (h *Handler) login(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, gin.H{"token": token, "role": user.Role, "username": user.Username})
+	// Получаем название компании для терминального режима
+	companyName := ""
+	if company, err := h.companyRepo.GetByID(context.Background(), user.CompanyID); err == nil {
+		companyName = company.Name
+	}
+
+	c.JSON(200, gin.H{
+		"token":        token,
+		"role":         user.Role,
+		"username":     user.Username,
+		"company_id":   user.CompanyID,
+		"company_name": companyName,
+	})
 }

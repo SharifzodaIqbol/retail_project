@@ -2,7 +2,9 @@ package http
 
 import (
 	"context"
+	"log"
 	"retail-managment-system/internal/domain"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,7 +26,8 @@ func (h *Handler) executeSale(c *gin.Context) {
 	}
 
 	go func() {
-		ownerID, _ := h.userRepo.GetOwnerChatID(context.Background())
+		companyID := c.MustGet("company_id").(int)
+		ownerID, _ := h.userRepo.GetOwnerChatID(context.Background(), companyID)
 		if ownerID != 0 {
 			for _, item := range lowStockItems {
 				h.tgBot.SendLowStockAlert(ownerID, item.Name, item.Stock)
@@ -39,31 +42,35 @@ func (h *Handler) getSalesHistory(c *gin.Context) {
 	c.JSON(200, history)
 }
 func (h *Handler) cancelSale(c *gin.Context) {
+	idStr := c.Param("id")
+	id, _ := strconv.Atoi(idStr)
 	var input struct {
-		SaleID int    `json:"sale_id"`
 		Reason string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(400, gin.H{"error": "Неверный формат данных"})
 		return
 	}
-
+	log.Printf("[DEBUG] Начинаем отмену чека ID: %v", id)
 	var totalAmount float64
-	err := h.dbPool.QueryRow(context.Background(), "SELECT total_amount FROM sales WHERE id = $1", input.SaleID).Scan(&totalAmount)
+	err := h.dbPool.QueryRow(context.Background(), "SELECT total_amount FROM sales WHERE id = $1", id).Scan(&totalAmount)
 	if err != nil {
+		log.Printf("[ERROR]: %v", err)
 		c.JSON(404, gin.H{"error": "Чек не найден"})
 		return
 	}
 
-	if err = h.saleRepo.CancelSale(context.Background(), input.SaleID, input.Reason); err != nil {
+	if err = h.saleRepo.CancelSale(context.Background(), id, input.Reason); err != nil {
+		log.Printf("[ERROR]: %v", err)
 		c.JSON(500, gin.H{"error": "Не удалось отменить чек: " + err.Error()})
 		return
 	}
 
 	go func() {
-		ownerID, _ := h.userRepo.GetOwnerChatID(context.Background())
+		companyID := c.MustGet("company_id").(int)
+		ownerID, _ := h.userRepo.GetOwnerChatID(context.Background(), companyID)
 		if ownerID != 0 {
-			h.tgBot.SendCancelNotification(ownerID, input.SaleID, input.Reason, totalAmount)
+			h.tgBot.SendCancelNotification(ownerID, id, input.Reason, totalAmount)
 		}
 	}()
 

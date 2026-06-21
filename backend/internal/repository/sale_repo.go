@@ -89,14 +89,14 @@ func (r *SaleRepository) GetTopProducts(ctx context.Context, limit int) (string,
 	}
 	defer rows.Close()
 
-	report := "🔝 **Топ товаров:**\n"
+	report := "🔝 **Маҳсулотҳои бисер харида шуда!**\n"
 	for rows.Next() {
 		var name string
 		var qty int
 		if err := rows.Scan(&name, &qty); err != nil {
 			continue
 		}
-		report += fmt.Sprintf("- %s: %d шт.\n", name, qty)
+		report += fmt.Sprintf("- %s: %d дона.\n", name, qty)
 	}
 	return report, nil
 }

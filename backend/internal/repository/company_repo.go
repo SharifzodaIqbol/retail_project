@@ -117,6 +117,15 @@ func (r *CompanyRepository) RegisterNewBusiness(
 	return tx.Commit(ctx)
 }
 
+// GetByID — получить компанию по ID (используется при логине для названия)
+func (r *CompanyRepository) GetByID(ctx context.Context, id int) (*domain.Company, error) {
+	var c domain.Company
+	err := r.db.QueryRow(ctx,
+		`SELECT id, name FROM companies WHERE id = $1`, id,
+	).Scan(&c.ID, &c.Name)
+	return &c, err
+}
+
 // Typed error для хэндлера
 type TrialNotAllowedError struct {
 	Reason domain.TrialDeniedReason

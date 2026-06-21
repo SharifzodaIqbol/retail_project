@@ -56,11 +56,15 @@ func (r *ProductRepository) GetByBarcode(ctx context.Context, companyID int, bar
 	return &p, nil
 }
 
-func (r *ProductRepository) SearchByName(ctx context.Context, name string) ([]domain.Product, error) {
+// SearchByName — ищет товары по названию в рамках одной компании.
+// ВАЖНО: добавлен фильтр company_id (раньше его не было — продавец мог
+// получить в подсказках товары чужих компаний).
+func (r *ProductRepository) SearchByName(ctx context.Context, companyID int, name string) ([]domain.Product, error) {
 	query := `SELECT id, name, barcode, sell_price, stock FROM products 
-              WHERE name ILIKE $1 AND is_active = true LIMIT 10`
+              WHERE company_id = $1 AND name ILIKE $2 AND is_active = true 
+              ORDER BY name ASC LIMIT 10`
 
-	rows, err := r.db.Query(ctx, query, "%"+name+"%")
+	rows, err := r.db.Query(ctx, query, companyID, "%"+name+"%")
 	if err != nil {
 		return nil, err
 	}
@@ -116,4 +120,13 @@ func (r *ProductRepository) UpdateInventory(ctx context.Context, id int, addStoc
 func (r *ProductRepository) SoftDelete(ctx context.Context, id int) error {
 	_, err := r.db.Exec(ctx, "UPDATE products SET is_active = false WHERE id = $1", id)
 	return err
+}
+func (r *ProductRepository) GetNameByID(ctx context.Context, id int) (string, error) {
+	query := `SELECT name FROM products WHERE id = $1`
+	var name string
+	err := r.db.QueryRow(ctx, query, id).Scan(&name)
+	if err != nil {
+		return "", err
+	}
+	return name, nil
 }

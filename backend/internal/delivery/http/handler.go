@@ -2,9 +2,9 @@ package http
 
 import (
 	"os"
+	"retail-managment-system/internal/delivery/telegram"
 	"retail-managment-system/internal/middleware"
 	"retail-managment-system/internal/repository"
-	"retail-managment-system/internal/delivery/telegram"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,8 +15,9 @@ type Handler struct {
 	saleRepo    *repository.SaleRepository
 	userRepo    *repository.UserRepository
 	companyRepo *repository.CompanyRepository
+	shopRepo    *repository.ShopRepository
 	tgBot       *telegram.Bot
-	dbPool      *pgxpool.Pool // нужен для кастомных SQL-запросов вроде отмены чека
+	dbPool      *pgxpool.Pool
 }
 
 func NewHandler(
@@ -24,6 +25,7 @@ func NewHandler(
 	saleRepo *repository.SaleRepository,
 	userRepo *repository.UserRepository,
 	companyRepo *repository.CompanyRepository,
+	shopRepo *repository.ShopRepository,
 	tgBot *telegram.Bot,
 	dbPool *pgxpool.Pool,
 ) *Handler {
@@ -32,12 +34,13 @@ func NewHandler(
 		saleRepo:    saleRepo,
 		userRepo:    userRepo,
 		companyRepo: companyRepo,
+		shopRepo:    shopRepo,
 		tgBot:       tgBot,
 		dbPool:      dbPool,
 	}
 }
 
-// InitRoutes регистрирует все роуты, перенесённые из main.go
+// InitRoutes регистрирует все роуты
 func (h *Handler) InitRoutes() *gin.Engine {
 	r := gin.Default()
 	r.Use(middleware.CorsMiddleware())
@@ -45,6 +48,10 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	// Публичные роуты
 	r.POST("/register", h.register)
 	r.POST("/login", h.login)
+
+	// ─── Терминальный режим (публичные, без JWT) ───────────────────────────────
+	r.GET("/terminal/users", h.getTerminalUsers)
+	r.POST("/terminal/pin-login", h.pinLogin)
 
 	// Защищённые роуты
 	api := r.Group("/api")
@@ -64,7 +71,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 		{
 			sales.POST("", h.executeSale)
 			sales.GET("", h.getSalesHistory)
-			sales.POST("/cancel", h.cancelSale)
+			sales.POST("/:id/cancel", h.cancelSale)
 		}
 
 		// Аналитика (только owner)
@@ -85,6 +92,25 @@ func (h *Handler) InitRoutes() *gin.Engine {
 			users.GET("", h.getAllUsers)
 			users.POST("", h.createUser)
 			users.DELETE("/:id", h.deleteUser)
+			users.PUT("/:id/pin", h.setUserPin)
+		}
+
+		// Магазины (только owner) — задача #2
+		shops := api.Group("/shops")
+		shops.Use(middleware.RoleMiddleware("owner"))
+		{
+			shops.GET("", h.getShops)
+			shops.POST("", h.createShop)
+			shops.PUT("/:id", h.updateShop)
+			shops.DELETE("/:id", h.deleteShop)
+		}
+
+		// Telegram привязка (только owner)
+		tg := api.Group("/telegram")
+		tg.Use(middleware.RoleMiddleware("owner"))
+		{
+			tg.POST("/link-token", h.generateTgLinkToken)
+			tg.DELETE("/link", h.unlinkTelegram)
 		}
 	}
 

@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:retail_app/device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:retail_app/helpers/device_info_helper.dart';
 import 'api_service.dart';
 
 class AuthService {
@@ -22,6 +22,8 @@ class AuthService {
         await prefs.setString('jwt_token', data['token']);
         await prefs.setString('user_role', data['role']);
         await prefs.setString('username', data['username'] ?? username);
+        await prefs.setInt('company_id', data['company_id'] ?? 0);
+        await prefs.setString('company_name', data['company_name'] ?? '');
         return data;
       }
       return null;
@@ -37,7 +39,7 @@ class AuthService {
     String password,
   ) async {
     try {
-      final deviceId = await DeviceService.getDeviceId();
+      final deviceId = await DeviceInfoHelper.getDeviceId();
       final url = '${ApiService.baseUrl}/register';
 
       final Map<String, String> requestBody = {
@@ -78,6 +80,9 @@ class AuthService {
     await prefs.remove('jwt_token');
     await prefs.remove('user_role');
     await prefs.remove('username');
+    await prefs.remove('company_id');
+    await prefs.remove('company_name');
+    await prefs.remove('terminal_mode');
   }
 
   Future<String?> getRole() async {

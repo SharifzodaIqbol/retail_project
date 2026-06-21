@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/product.dart';
 import '../services/api_service.dart';
-import '../widgets/barcode_scanner.dart';
+import '../services/auth_service.dart';
 
 class InventoryScreen extends StatefulWidget {
   const InventoryScreen({super.key});
@@ -12,17 +12,25 @@ class InventoryScreen extends StatefulWidget {
 
 class _InventoryScreenState extends State<InventoryScreen> {
   final _api = ApiService();
+  final _authService = AuthService();
   final _searchCtrl = TextEditingController();
 
   List<Product> _allProducts = [];
   List<Product> _filtered = [];
   bool _loading = true;
+  String _role = '';
 
   @override
   void initState() {
     super.initState();
+    _loadRole();
     _loadProducts();
     _searchCtrl.addListener(_filter);
+  }
+
+  Future<void> _loadRole() async {
+    final role = await _authService.getRole() ?? '';
+    if (mounted) setState(() => _role = role);
   }
 
   @override
@@ -54,12 +62,14 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
   void _showRestockDialog(Product product) {
     final amountCtrl = TextEditingController();
+    final reasonCtrl = TextEditingController();
     final sellCtrl = TextEditingController(
       text: product.sellPrice.toStringAsFixed(2),
     );
     final buyCtrl = TextEditingController(
       text: product.buyPrice.toStringAsFixed(2),
     );
+    final isSeller = _role == 'seller';
 
     showModalBottomSheet(
       context: context,
@@ -68,103 +78,149 @@ class _InventoryScreenState extends State<InventoryScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(
-          left: 20,
-          right: 20,
-          top: 20,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              product.name,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          String? reasonError;
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 20,
             ),
-            Text(
-              'Текущий остаток: ${product.stock} шт.',
-              style: const TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 20),
-            TextField(
-              controller: amountCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Добавить количество',
-                prefixIcon: Icon(Icons.add_box),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: buyCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Цена закупа',
-                      border: OutlineInputBorder(),
-                    ),
+                Text(
+                  product.name,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: sellCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Цена продажи',
-                      border: OutlineInputBorder(),
+                Text(
+                  'Текущий остаток: ${product.stock} шт.',
+                  style: const TextStyle(color: Colors.grey),
+                ),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: amountCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Добавить количество',
+                    prefixIcon: Icon(Icons.add_box),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: buyCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Цена закупа',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: sellCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Цена продажи',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (isSeller) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: reasonCtrl,
+                    maxLines: 2,
+                    decoration: InputDecoration(
+                      labelText: 'Причина изменения склада',
+                      hintText: 'Например: пересчёт, новая поставка...',
+                      prefixIcon: const Icon(Icons.edit_note),
+                      border: const OutlineInputBorder(),
+                      errorText: reasonError,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Владелец получит уведомление об этом изменении',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4F6EF7),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: () async {
+                      if (isSeller && reasonCtrl.text.trim().isEmpty) {
+                        setSheetState(
+                          () => reasonError = 'Укажите причину изменения',
+                        );
+                        return;
+                      }
+
+                      final amount = int.tryParse(amountCtrl.text) ?? 0;
+                      final sell = double.tryParse(sellCtrl.text) ?? 0;
+                      final buy = double.tryParse(buyCtrl.text) ?? 0;
+
+                      final ok = await _api.updateInventory(
+                        product.id,
+                        amount,
+                        sell,
+                        buy,
+                        reason: isSeller ? reasonCtrl.text.trim() : null,
+                      );
+
+                      if (ok && mounted) {
+                        Navigator.pop(context);
+                        _loadProducts();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              isSeller
+                                  ? 'Склад обновлён! Владелец уведомлён.'
+                                  : 'Склад обновлён!',
+                            ),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      } else if (!ok && mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Не удалось обновить склад'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    },
+                    child: const Text(
+                      'Сохранить',
+                      style: TextStyle(color: Colors.white, fontSize: 16),
                     ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF4F6EF7),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onPressed: () async {
-                  final amount = int.tryParse(amountCtrl.text) ?? 0;
-                  final sell = double.tryParse(sellCtrl.text) ?? 0;
-                  final buy = double.tryParse(buyCtrl.text) ?? 0;
-
-                  final ok = await _api.updateInventory(
-                    product.id,
-                    amount,
-                    sell,
-                    buy,
-                  );
-
-                  if (ok && mounted) {
-                    Navigator.pop(context);
-                    _loadProducts();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Склад обновлён!'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                  }
-                },
-                child: const Text(
-                  'Сохранить',
-                  style: TextStyle(color: Colors.white, fontSize: 16),
-                ),
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
