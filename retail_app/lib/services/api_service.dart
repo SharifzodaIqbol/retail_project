@@ -287,14 +287,24 @@ class ApiService {
     }
   }
 
-  /// Войти по PIN (терминальный режим) — возвращает токен, роль, имя
-  Future<Map<String, dynamic>?> pinLogin(int userId, String pin) async {
+  /// Войти по PIN (терминальный режим) — возвращает токен, роль, имя.
+  /// company_id обязателен: PIN проверяется в паре с компанией, иначе
+  /// подбор 4-значного PIN сработал бы против пользователя любой компании.
+  Future<Map<String, dynamic>?> pinLogin(
+    int userId,
+    int companyId,
+    String pin,
+  ) async {
     try {
       final response = await http
           .post(
             Uri.parse('$baseUrl/terminal/pin-login'),
             headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode({'user_id': userId, 'pin': pin}),
+            body: jsonEncode({
+              'user_id': userId,
+              'company_id': companyId,
+              'pin': pin,
+            }),
           )
           .timeout(const Duration(seconds: 10));
       if (response.statusCode == 200) return jsonDecode(response.body);

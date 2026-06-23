@@ -8,8 +8,10 @@ import '../services/api_service.dart';
 class TerminalScreen extends StatefulWidget {
   final int companyId;
   final String companyName;
+
   /// Продавец успешно вошёл по PIN
   final void Function(String token, String role, String username) onSellerLogin;
+
   /// Хозяин вышел из терминального режима (уже авторизован)
   final VoidCallback onOwnerExitTerminal;
 
@@ -53,6 +55,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
       builder: (_) => _PinInputSheet(
         userName: user['username'],
         userId: user['id'],
+        companyId: widget.companyId,
         onSuccess: (token, role, username) async {
           if (!mounted) return;
           Navigator.of(context).pop(); // закрыть sheet
@@ -119,18 +122,28 @@ class _TerminalScreenState extends State<TerminalScreen> {
                   GestureDetector(
                     onLongPress: _exitToOwner,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white10,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Row(
                         children: [
-                          Icon(Icons.lock_outline, color: Colors.white54, size: 16),
+                          Icon(
+                            Icons.lock_outline,
+                            color: Colors.white54,
+                            size: 16,
+                          ),
                           SizedBox(width: 6),
                           Text(
                             'Удерж. для выхода',
-                            style: TextStyle(color: Colors.white54, fontSize: 12),
+                            style: TextStyle(
+                              color: Colors.white54,
+                              fontSize: 12,
+                            ),
                           ),
                         ],
                       ),
@@ -165,44 +178,48 @@ class _TerminalScreenState extends State<TerminalScreen> {
                       child: CircularProgressIndicator(color: Colors.white54),
                     )
                   : _users.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Text(
-                                'Нет сотрудников с PIN-кодом.\nПопросите владельца добавить продавца с PIN.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: Colors.white54),
-                              ),
-                              const SizedBox(height: 16),
-                              TextButton(
-                                onPressed: _loadUsers,
-                                child: const Text('Обновить', style: TextStyle(color: Colors.white38)),
-                              ),
-                            ],
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text(
+                            'Нет сотрудников с PIN-кодом.\nПопросите владельца добавить продавца с PIN.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.white54),
                           ),
-                        )
-                      : RefreshIndicator(
-                          onRefresh: _loadUsers,
-                          child: GridView.builder(
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
-                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          const SizedBox(height: 16),
+                          TextButton(
+                            onPressed: _loadUsers,
+                            child: const Text(
+                              'Обновить',
+                              style: TextStyle(color: Colors.white38),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _loadUsers,
+                      child: GridView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
                               crossAxisCount: 2,
                               mainAxisSpacing: 16,
                               crossAxisSpacing: 16,
                               childAspectRatio: 1.3,
                             ),
-                            itemCount: _users.length,
-                            itemBuilder: (context, i) {
-                              final u = _users[i];
-                              return _UserCard(
-                                username: u['username'],
-                                role: u['role'],
-                                onTap: () => _selectUser(u),
-                              );
-                            },
-                          ),
-                        ),
+                        itemCount: _users.length,
+                        itemBuilder: (context, i) {
+                          final u = _users[i];
+                          return _UserCard(
+                            username: u['username'],
+                            role: u['role'],
+                            onTap: () => _selectUser(u),
+                          );
+                        },
+                      ),
+                    ),
             ),
           ],
         ),
@@ -274,11 +291,13 @@ class _UserCard extends StatelessWidget {
 class _PinInputSheet extends StatefulWidget {
   final String userName;
   final int userId;
+  final int companyId;
   final void Function(String token, String role, String username) onSuccess;
 
   const _PinInputSheet({
     required this.userName,
     required this.userId,
+    required this.companyId,
     required this.onSuccess,
   });
 
@@ -308,7 +327,7 @@ class _PinInputSheetState extends State<_PinInputSheet> {
 
   Future<void> _submit() async {
     setState(() => _loading = true);
-    final result = await _api.pinLogin(widget.userId, _pin);
+    final result = await _api.pinLogin(widget.userId, widget.companyId, _pin);
     if (!mounted) return;
     if (result != null) {
       widget.onSuccess(result['token'], result['role'], result['username']);
@@ -372,8 +391,8 @@ class _PinInputSheetState extends State<_PinInputSheet> {
                   color: _error != null
                       ? Colors.red
                       : filled
-                          ? const Color(0xFF4F6EF7)
-                          : Colors.white24,
+                      ? const Color(0xFF4F6EF7)
+                      : Colors.white24,
                 ),
               );
             }),
@@ -523,7 +542,10 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
           ),
           if (_error != null) ...[
             const SizedBox(height: 8),
-            Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+            Text(
+              _error!,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+            ),
           ],
         ],
       ),
@@ -534,12 +556,17 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
         ),
         ElevatedButton(
           onPressed: _loading ? null : _confirm,
-          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F6EF7)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF4F6EF7),
+          ),
           child: _loading
               ? const SizedBox(
                   width: 16,
                   height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
               : const Text('Войти', style: TextStyle(color: Colors.white)),
         ),
