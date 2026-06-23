@@ -10,7 +10,6 @@ import (
 	"retail-managment-system/internal/delivery/telegram"
 	"retail-managment-system/internal/repository"
 
-	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
@@ -38,7 +37,7 @@ func main() {
 	}
 	go tgBot.Start(saleRepo, userRepo, productRepo)
 
-	go startDailyReportScheduler(&gin.Context{}, saleRepo, userRepo, tgBot)
+	go startDailyReportScheduler(saleRepo, userRepo, tgBot)
 
 	handler := http.NewHandler(productRepo, saleRepo, userRepo, companyRepo, shopRepo, tgBot, dbPool)
 	router := handler.InitRoutes()
@@ -50,17 +49,26 @@ func main() {
 	router.Run(":" + port)
 }
 
-func startDailyReportScheduler(c *gin.Context, saleRepo *repository.SaleRepository, userRepo *repository.UserRepository, tgBot *telegram.Bot) {
+// startDailyReportScheduler — ИСПРАВЛЕНО: раньше использовался один общий
+// (несуществующий) "company_id" из пустого gin.Context{} — это паниковало бы
+// каждый день в 21:00 (MustGet на незаполненном контексте) и в любом случае
+// было неверно для многотенантной системы: у каждой компании своя выручка.
+// Теперь отчёт рассылается КАЖДОМУ владельцу отдельно, строго по его company_id.
+func startDailyReportScheduler(saleRepo *repository.SaleRepository, userRepo *repository.UserRepository, tgBot *telegram.Bot) {
 	log.Println("Планировщик отчетов запущен...")
 	for {
 		now := time.Now()
 		if now.Hour() == 21 && now.Minute() == 0 {
-			stats, err := saleRepo.GetTodayTotal(context.Background())
-			if err == nil {
-				companyID := c.MustGet("company_id").(int) 
-				ownerID, err := userRepo.GetOwnerChatID(context.Background(), companyID)
-				if err == nil && ownerID != 0 {
-					tgBot.SendDailyReport(ownerID, stats.Total, stats.Count)
+			owners, err := userRepo.GetAllOwnersWithTelegram(context.Background())
+			if err != nil {
+				log.Printf("[ERROR] Не удалось получить владельцев для отчёта: %v", err)
+			} else {
+				for _, owner := range owners {
+					stats, err := saleRepo.GetTodayTotal(context.Background(), owner.CompanyID)
+					if err != nil {
+						continue
+					}
+					tgBot.SendDailyReport(owner.TgChatID, stats.Total, stats.Count)
 				}
 			}
 			time.Sleep(61 * time.Second)

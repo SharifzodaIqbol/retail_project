@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"retail-managment-system/internal/domain"
+	"retail-managment-system/internal/repository"
 	"strconv"
 	"strings"
 
@@ -91,7 +92,11 @@ func (h *Handler) updateInventory(c *gin.Context) {
 		return
 	}
 
-	if err := h.productRepo.UpdateInventory(context.Background(), id, input.AddStock, input.SellPrice, input.BuyPrice); err != nil {
+	if err := h.productRepo.UpdateInventory(context.Background(), id, companyID, input.AddStock, input.SellPrice, input.BuyPrice); err != nil {
+		if err == repository.ErrNotFound {
+			c.JSON(404, gin.H{"error": "Товар не найден"})
+			return
+		}
 		c.JSON(500, gin.H{"error": "Не удалось обновить склад"})
 		return
 	}
@@ -99,7 +104,7 @@ func (h *Handler) updateInventory(c *gin.Context) {
 	if isSeller && h.tgBot != nil {
 		go func() {
 			ctx := context.Background()
-			productName, err := h.productRepo.GetNameByID(ctx, id)
+			productName, err := h.productRepo.GetNameByID(ctx, id, companyID)
 			if err != nil {
 				return
 			}
@@ -121,8 +126,13 @@ func (h *Handler) deleteProduct(c *gin.Context) {
 		c.JSON(403, gin.H{"error": "Нет прав"})
 		return
 	}
+	companyID := c.MustGet("company_id").(int)
 	id, _ := strconv.Atoi(c.Param("id"))
-	if err := h.productRepo.SoftDelete(context.Background(), id); err != nil {
+	if err := h.productRepo.SoftDelete(context.Background(), id, companyID); err != nil {
+		if err == repository.ErrNotFound {
+			c.JSON(404, gin.H{"error": "Товар не найден"})
+			return
+		}
 		c.JSON(500, gin.H{"error": "Ошибка удаления"})
 		return
 	}

@@ -100,10 +100,14 @@ func (h *Handler) createUser(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok"})
 }
 
-// deleteUser — удаление сотрудника
+// deleteUser — удаление сотрудника.
+// ИСПРАВЛЕНО (IDOR): раньше удаление шло по глобальному id без проверки
+// company_id — владелец одной компании мог удалить сотрудника другой
+// компании, подобрав числовой id.
 func (h *Handler) deleteUser(c *gin.Context) {
+	companyID := c.MustGet("company_id").(int)
 	id, _ := strconv.Atoi(c.Param("id"))
-	if err := h.userRepo.Delete(context.Background(), id); err != nil {
+	if err := h.userRepo.Delete(context.Background(), id, companyID); err != nil {
 		c.JSON(500, gin.H{"error": "Ошибка удаления"})
 		return
 	}
@@ -137,7 +141,7 @@ func (h *Handler) setUserPin(c *gin.Context) {
 		return
 	}
 
-	if err := h.userRepo.SetPin(context.Background(), id, pinHash); err != nil {
+	if err := h.userRepo.SetPin(context.Background(), id, companyID.(int), pinHash); err != nil {
 		c.JSON(500, gin.H{"error": "Ошибка сохранения PIN"})
 		return
 	}
@@ -146,6 +150,9 @@ func (h *Handler) setUserPin(c *gin.Context) {
 }
 
 // pinLogin — вход продавца через PIN в режиме терминала.
+// ИСПРАВЛЕНО: теперь PIN проверяется в паре с company_id (через
+// GetByIDAndCompany), а не по голому user_id — иначе подбор 4-значного
+// PIN мог сработать против пользователя любой другой компании.
 func (h *Handler) pinLogin(c *gin.Context) {
 	var req domain.PinLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -153,20 +160,14 @@ func (h *Handler) pinLogin(c *gin.Context) {
 		return
 	}
 
-	pinHash, err := h.userRepo.GetPinHash(context.Background(), req.UserID)
-	if err != nil || pinHash == "" {
+	user, err := h.userRepo.GetByIDAndCompany(context.Background(), req.UserID, req.CompanyID)
+	if err != nil || user.PinHash == "" {
 		c.JSON(401, gin.H{"error": "PIN не установлен"})
 		return
 	}
 
-	if !auth.CheckPasswordHash(req.Pin, pinHash) {
+	if !auth.CheckPasswordHash(req.Pin, user.PinHash) {
 		c.JSON(401, gin.H{"error": "Неверный PIN"})
-		return
-	}
-
-	user, err := h.userRepo.GetByID(context.Background(), req.UserID)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "Ошибка получения данных"})
 		return
 	}
 

@@ -80,7 +80,7 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		if err != nil || user.Role != "owner" {
 			return c.Send("⛔ Иҷозат нест.")
 		}
-		stats, err := saleRepo.GetTodayTotal(context.Background())
+		stats, err := saleRepo.GetTodayTotal(context.Background(), user.CompanyID)
 		if err != nil {
 			return c.Send("❌ Хатогии маълумот")
 		}
@@ -94,7 +94,7 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		if err != nil || user.Role != "owner" {
 			return c.Send("⛔ Шумо иҷозати дидани фоида надоред.")
 		}
-		profit, err := saleRepo.GetDailyNetProfit(context.Background())
+		profit, err := saleRepo.GetDailyNetProfit(context.Background(), user.CompanyID)
 		if err != nil {
 			return c.Send("❌ Хатогии ҳисобкунии фоида")
 		}
@@ -108,7 +108,7 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		if err != nil || user.Role != "owner" {
 			return c.Send("⛔ Иҷозат нест.")
 		}
-		report, err := saleRepo.GetTopProducts(context.Background(), 5)
+		report, err := saleRepo.GetTopProducts(context.Background(), user.CompanyID, 5)
 		if err != nil {
 			return c.Send("❌ Хато шуд барои дидани борҳои бисер харида шуда!")
 		}
@@ -121,7 +121,7 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		if err != nil || user.Role != "owner" {
 			return c.Send("⛔ Танҳо соҳиби мағоза метавонад боқимондаро бубинад.")
 		}
-		products, err := productRepo.GetLowStockProducts(context.Background(), 10)
+		products, err := productRepo.GetLowStockProducts(context.Background(), user.CompanyID, 10)
 		if err != nil {
 			return c.Send("❌ Хатогии базаи маълумот.")
 		}

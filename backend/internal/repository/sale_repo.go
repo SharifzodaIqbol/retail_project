@@ -16,7 +16,11 @@ func NewSaleRepository(db *pgxpool.Pool) *SaleRepository {
 	return &SaleRepository{db: db}
 }
 
-func (r *SaleRepository) ExecuteSale(ctx context.Context, sellerID int, items []domain.SaleItem, total float64) (int, []domain.Product, error) {
+// ExecuteSale — создаёт продажу строго в рамках одной компании.
+// ВАЖНО: company_id записывается в sales, и каждая позиция чека проверяется
+// на принадлежность той же компании (раньше можно было продать товар чужой
+// компании и списать его склад, передав чужой product_id).
+func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID int, sellerID int, items []domain.SaleItem, total float64) (int, []domain.Product, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return 0, nil, err
@@ -25,8 +29,8 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, sellerID int, items []
 
 	var saleID int
 	err = tx.QueryRow(ctx,
-		"INSERT INTO sales (seller_id, total_amount) VALUES ($1, $2) RETURNING id",
-		sellerID, total).Scan(&saleID)
+		"INSERT INTO sales (company_id, seller_id, total_amount) VALUES ($1, $2, $3) RETURNING id",
+		companyID, sellerID, total).Scan(&saleID)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -35,19 +39,20 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, sellerID int, items []
 
 	for _, item := range items {
 		_, err = tx.Exec(ctx, `INSERT INTO sale_items 
-							   (sale_id, product_id, quantity, price_at_sale) 
+							   (sale_id, company_id, product_id, quantity, price_at_sale) 
 							   VALUES ($1, $2, $3, $4)`,
-			saleID, item.ProductID, item.Quantity, item.PriceAtSale)
+			saleID, companyID, item.ProductID, item.Quantity, item.PriceAtSale)
 		if err != nil {
 			return 0, nil, err
 		}
 
 		var p domain.Product
+		// company_id = $3 — не даём списать склад товара, принадлежащего другой компании
 		err = tx.QueryRow(ctx, `UPDATE products 
 								SET stock = stock - $1 
-								WHERE id = $2 AND stock >= $1 
+								WHERE id = $2 AND company_id = $3 AND stock >= $1 
 								RETURNING name, stock`,
-			item.Quantity, item.ProductID).Scan(&p.Name, &p.Stock)
+			item.Quantity, item.ProductID, companyID).Scan(&p.Name, &p.Stock)
 
 		if err != nil {
 			return 0, nil, fmt.Errorf("недостаточно товара ID: %d", item.ProductID)
@@ -60,7 +65,7 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, sellerID int, items []
 	return saleID, lowStockProducts, tx.Commit(ctx)
 }
 
-func (r *SaleRepository) GetTodayTotal(ctx context.Context) (domain.DailyStats, error) {
+func (r *SaleRepository) GetTodayTotal(ctx context.Context, companyID int) (domain.DailyStats, error) {
 	var stats domain.DailyStats
 	query := `
 		SELECT 
@@ -68,22 +73,25 @@ func (r *SaleRepository) GetTodayTotal(ctx context.Context) (domain.DailyStats, 
 			COUNT(id) 
 		FROM sales 
 		WHERE created_at >= CURRENT_DATE 
-		AND is_canceled = false`
+		AND is_canceled = false
+		AND company_id = $1`
 
-	err := r.db.QueryRow(ctx, query).Scan(&stats.Total, &stats.Count)
+	err := r.db.QueryRow(ctx, query, companyID).Scan(&stats.Total, &stats.Count)
 	return stats, err
 }
 
-func (r *SaleRepository) GetTopProducts(ctx context.Context, limit int) (string, error) {
+func (r *SaleRepository) GetTopProducts(ctx context.Context, companyID int, limit int) (string, error) {
 	query := `
         SELECT p.name, SUM(si.quantity) as total_qty
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
+        JOIN sales s ON si.sale_id = s.id
+        WHERE s.company_id = $1
         GROUP BY p.name
         ORDER BY total_qty DESC
-        LIMIT $1`
+        LIMIT $2`
 
-	rows, err := r.db.Query(ctx, query, limit)
+	rows, err := r.db.Query(ctx, query, companyID, limit)
 	if err != nil {
 		return "", err
 	}
@@ -101,16 +109,17 @@ func (r *SaleRepository) GetTopProducts(ctx context.Context, limit int) (string,
 	return report, nil
 }
 
-func (r *SaleRepository) GetAll(ctx context.Context) ([]domain.Sale, error) {
+func (r *SaleRepository) GetAll(ctx context.Context, companyID int) ([]domain.Sale, error) {
 	query := `
         SELECT s.id, s.seller_id, u.username, s.total_amount, s.is_canceled, s.cancel_reason,
                TO_CHAR(s.created_at, 'DD.MM.YYYY HH24:MI') as created_at
         FROM sales s
         LEFT JOIN users u ON s.seller_id = u.id
+        WHERE s.company_id = $1
         ORDER BY s.id DESC
         LIMIT 200`
 
-	rows, err := r.db.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -133,12 +142,24 @@ func (r *SaleRepository) GetAll(ctx context.Context) ([]domain.Sale, error) {
 	return sales, rows.Err()
 }
 
-func (r *SaleRepository) CancelSale(ctx context.Context, saleID int, reason string) error {
+// CancelSale — отменяет чек строго внутри своей компании.
+// companyID добавлен в WHERE, чтобы владелец одной компании не мог
+// отменить (и тем самым вернуть на склад товар) чужой чек по его ID.
+func (r *SaleRepository) CancelSale(ctx context.Context, companyID int, saleID int, reason string) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+
+	var exists bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sales WHERE id = $1 AND company_id = $2)`, saleID, companyID).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("чек не найден")
+	}
 
 	updateStockQuery := `
         UPDATE products 
@@ -151,7 +172,7 @@ func (r *SaleRepository) CancelSale(ctx context.Context, saleID int, reason stri
 		return err
 	}
 
-	_, err = tx.Exec(ctx, "UPDATE sales SET is_canceled = true, cancel_reason = $1 WHERE id = $2", reason, saleID)
+	_, err = tx.Exec(ctx, "UPDATE sales SET is_canceled = true, cancel_reason = $1 WHERE id = $2 AND company_id = $3", reason, saleID, companyID)
 	if err != nil {
 		return err
 	}
@@ -159,7 +180,14 @@ func (r *SaleRepository) CancelSale(ctx context.Context, saleID int, reason stri
 	return tx.Commit(ctx)
 }
 
-func (r *SaleRepository) GetDailyNetProfit(ctx context.Context) (float64, error) {
+// GetSaleTotal — возвращает сумму чека, только если он принадлежит компании
+func (r *SaleRepository) GetSaleTotal(ctx context.Context, companyID int, saleID int) (float64, error) {
+	var total float64
+	err := r.db.QueryRow(ctx, "SELECT total_amount FROM sales WHERE id = $1 AND company_id = $2", saleID, companyID).Scan(&total)
+	return total, err
+}
+
+func (r *SaleRepository) GetDailyNetProfit(ctx context.Context, companyID int) (float64, error) {
 	var profit float64
 	query := `
         SELECT 
@@ -168,15 +196,16 @@ func (r *SaleRepository) GetDailyNetProfit(ctx context.Context) (float64, error)
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
         WHERE s.is_canceled = false 
-          AND s.created_at >= CURRENT_DATE`
+          AND s.created_at >= CURRENT_DATE
+          AND s.company_id = $1`
 
-	err := r.db.QueryRow(ctx, query).Scan(&profit)
+	err := r.db.QueryRow(ctx, query, companyID).Scan(&profit)
 	return profit, err
 }
 
 // ─── НОВЫЕ методы аналитики ────────────────────────────────────────────────
 
-func (r *SaleRepository) GetPeriodSummary(ctx context.Context, period string) (domain.PeriodSummary, error) {
+func (r *SaleRepository) GetPeriodSummary(ctx context.Context, companyID int, period string) (domain.PeriodSummary, error) {
 	var dateFilter string
 	switch period {
 	case "week":
@@ -197,15 +226,15 @@ func (r *SaleRepository) GetPeriodSummary(ctx context.Context, period string) (d
 		FROM sales s
 		LEFT JOIN sale_items si ON s.id = si.sale_id
 		LEFT JOIN products p ON si.product_id = p.id
-		WHERE s.is_canceled = false AND s.%s`, dateFilter)
+		WHERE s.is_canceled = false AND s.company_id = $1 AND s.%s`, dateFilter)
 
-	err := r.db.QueryRow(ctx, query).Scan(
+	err := r.db.QueryRow(ctx, query, companyID).Scan(
 		&summary.Revenue, &summary.Profit, &summary.SalesCount, &summary.AvgCheck,
 	)
 	return summary, err
 }
 
-func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, limit int) ([]domain.TopProduct, error) {
+func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, companyID int, limit int) ([]domain.TopProduct, error) {
 	query := `
         SELECT 
             p.id,
@@ -216,12 +245,12 @@ func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, limit int) 
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
-        WHERE s.is_canceled = false
+        WHERE s.is_canceled = false AND s.company_id = $1
         GROUP BY p.id, p.name
         ORDER BY total_qty DESC
-        LIMIT $1`
+        LIMIT $2`
 
-	rows, err := r.db.Query(ctx, query, limit)
+	rows, err := r.db.Query(ctx, query, companyID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -238,10 +267,9 @@ func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, limit int) 
 	return products, nil
 }
 
-func (r *SaleRepository) GetSalesByDay(ctx context.Context, days int) ([]domain.SaleByDay, error) {
+func (r *SaleRepository) GetSalesByDay(ctx context.Context, companyID int, days int) ([]domain.SaleByDay, error) {
 	query := `
     WITH daily_series AS (
-        -- Генерируем сетку дат за запрошенный период
         SELECT generate_series(
             CURRENT_DATE - ($1 - 1) * INTERVAL '1 day',
             CURRENT_DATE,
@@ -249,7 +277,6 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, days int) ([]domain.
         )::date as day
     ),
     daily_sales AS (
-        -- Агрегируем продажи строго по дням, чтобы избежать дублирования строк
         SELECT 
             s.created_at::date as sale_date,
             SUM(s.total_amount) as total_revenue,
@@ -257,7 +284,6 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, days int) ([]domain.
             SUM(i.profit_per_sale) as total_profit
         FROM sales s
         LEFT JOIN (
-            -- Считаем профит по каждой позиции, сгруппировав по sale_id
             SELECT 
                 si.sale_id,
                 SUM(si.quantity * (si.price_at_sale - p.buy_price)) as profit_per_sale
@@ -265,10 +291,9 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, days int) ([]domain.
             JOIN products p ON si.product_id = p.id
             GROUP BY si.sale_id
         ) i ON s.id = i.sale_id
-        WHERE s.is_canceled = false
+        WHERE s.is_canceled = false AND s.company_id = $2
         GROUP BY s.created_at::date
     )
-    -- Соединяем календарь с реальными продажами, заменяя NULL на 0
     SELECT 
         TO_CHAR(ds.day, 'DD.MM') as date,
         COALESCE(ds_val.total_revenue, 0) as revenue,
@@ -278,7 +303,7 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, days int) ([]domain.
     LEFT JOIN daily_sales ds_val ON ds.day = ds_val.sale_date
     ORDER BY ds.day ASC`
 
-	rows, err := r.db.Query(ctx, query, days)
+	rows, err := r.db.Query(ctx, query, days, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +320,7 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, days int) ([]domain.
 	return result, nil
 }
 
-func (r *SaleRepository) GetSellerStats(ctx context.Context) ([]domain.SellerStat, error) {
+func (r *SaleRepository) GetSellerStats(ctx context.Context, companyID int) ([]domain.SellerStat, error) {
 	query := `
         SELECT 
             s.seller_id,
@@ -306,10 +331,11 @@ func (r *SaleRepository) GetSellerStats(ctx context.Context) ([]domain.SellerSta
         JOIN users u ON s.seller_id = u.id
         WHERE s.is_canceled = false
           AND s.created_at >= CURRENT_DATE
+          AND s.company_id = $1
         GROUP BY s.seller_id, u.username
         ORDER BY total_revenue DESC`
 
-	rows, err := r.db.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query, companyID)
 	if err != nil {
 		return nil, err
 	}

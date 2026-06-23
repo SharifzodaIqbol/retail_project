@@ -81,12 +81,14 @@ func (r *ProductRepository) SearchByName(ctx context.Context, companyID int, nam
 	return products, nil
 }
 
-func (r *ProductRepository) GetLowStockProducts(ctx context.Context, threshold int) ([]domain.Product, error) {
+// GetLowStockProducts — ИСПРАВЛЕНО: раньше не было фильтра по company_id,
+// поэтому владелец видел товары с низким остатком у ВСЕХ компаний.
+func (r *ProductRepository) GetLowStockProducts(ctx context.Context, companyID int, threshold int) ([]domain.Product, error) {
 	query := `SELECT id, name, stock FROM products 
-              WHERE stock < $1 AND is_active = true 
+              WHERE stock < $1 AND is_active = true AND company_id = $2
               ORDER BY stock ASC`
 
-	rows, err := r.db.Query(ctx, query, threshold)
+	rows, err := r.db.Query(ctx, query, threshold, companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -103,28 +105,49 @@ func (r *ProductRepository) GetLowStockProducts(ctx context.Context, threshold i
 	return products, nil
 }
 
-func (r *ProductRepository) UpdateInventory(ctx context.Context, id int, addStock int, sellPrice, buyPrice float64) error {
+// UpdateInventory — ИСПРАВЛЕНО (IDOR): без company_id любой авторизованный
+// пользователь мог по чужому /products/:id изменить остаток и цены товара
+// другой компании. Теперь обновление возможно только в рамках своей компании,
+// а если товар не принадлежит компании — возвращается ошибка "не найден".
+func (r *ProductRepository) UpdateInventory(ctx context.Context, id int, companyID int, addStock int, sellPrice, buyPrice float64) error {
 	query := `
 		UPDATE products 
 		SET 
 			stock = stock + $1, 
 			sell_price = $2, 
 			buy_price = $3 
-		WHERE id = $4`
+		WHERE id = $4 AND company_id = $5`
 
-	_, err := r.db.Exec(ctx, query, addStock, sellPrice, buyPrice, id)
-	return err
+	tag, err := r.db.Exec(ctx, query, addStock, sellPrice, buyPrice, id, companyID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
-// SoftDelete — помечает товар как неактивный (не удаляет физически)
-func (r *ProductRepository) SoftDelete(ctx context.Context, id int) error {
-	_, err := r.db.Exec(ctx, "UPDATE products SET is_active = false WHERE id = $1", id)
-	return err
+// SoftDelete — помечает товар как неактивный (не удаляет физически).
+// ИСПРАВЛЕНО (IDOR): добавлена проверка company_id, иначе любой owner мог
+// "удалить" (скрыть) товар чужой компании, зная его числовой id.
+func (r *ProductRepository) SoftDelete(ctx context.Context, id int, companyID int) error {
+	tag, err := r.db.Exec(ctx, "UPDATE products SET is_active = false WHERE id = $1 AND company_id = $2", id, companyID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
-func (r *ProductRepository) GetNameByID(ctx context.Context, id int) (string, error) {
-	query := `SELECT name FROM products WHERE id = $1`
+
+// GetNameByID — ИСПРАВЛЕНО: добавлен company_id, чтобы Telegram-уведомление
+// о складе никогда не могло утечь с названием товара другой компании.
+func (r *ProductRepository) GetNameByID(ctx context.Context, id int, companyID int) (string, error) {
+	query := `SELECT name FROM products WHERE id = $1 AND company_id = $2`
 	var name string
-	err := r.db.QueryRow(ctx, query, id).Scan(&name)
+	err := r.db.QueryRow(ctx, query, id, companyID).Scan(&name)
 	if err != nil {
 		return "", err
 	}

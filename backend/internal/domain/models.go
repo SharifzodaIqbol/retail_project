@@ -81,10 +81,15 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
-// PinLoginRequest — вход продавца через PIN в терминальном режиме
+// PinLoginRequest — вход продавца через PIN в терминальном режиме.
+// CompanyID обязателен: раньше вход проверялся только по глобальному
+// user_id + PIN, без привязки к компании. Поскольку PIN всего 4 цифры,
+// это давало возможность подбора (10000 вариантов) против ЛЮБОГО
+// пользователя в системе, а не только своей компании.
 type PinLoginRequest struct {
-	UserID int    `json:"user_id" binding:"required"`
-	Pin    string `json:"pin" binding:"required"`
+	UserID    int    `json:"user_id" binding:"required"`
+	CompanyID int    `json:"company_id" binding:"required"`
+	Pin       string `json:"pin" binding:"required"`
 }
 
 // SetPinRequest — установка PIN для сотрудника

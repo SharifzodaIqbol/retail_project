@@ -112,8 +112,12 @@ func (r *UserRepository) CreateSeller(ctx context.Context, u domain.User) error 
 	return err
 }
 
-func (r *UserRepository) Delete(ctx context.Context, id int) error {
-	_, err := r.db.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
+// Delete — ИСПРАВЛЕНО (IDOR): без company_id владелец одной компании мог
+// удалить сотрудника другой компании, зная его числовой id. Теперь удаление
+// возможно только в рамках своей компании, и нельзя удалить owner'а через
+// этот метод по ошибке/чужому id.
+func (r *UserRepository) Delete(ctx context.Context, id int, companyID int) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM users WHERE id = $1 AND company_id = $2`, id, companyID)
 	return err
 }
 
@@ -123,8 +127,11 @@ func (r *UserRepository) GetPinHash(ctx context.Context, userID int) (string, er
 	return pinHash, err
 }
 
-func (r *UserRepository) SetPin(ctx context.Context, userID int, pinHash string) error {
-	_, err := r.db.Exec(ctx, `UPDATE users SET pin_hash = $1 WHERE id = $2`, pinHash, userID)
+// SetPin — установка PIN. companyID добавлен для защиты в глубину
+// (хэндлер уже проверяет владельца через GetByIDAndCompany, но дублируем
+// проверку прямо в запросе на случай изменений в хэндлере).
+func (r *UserRepository) SetPin(ctx context.Context, userID int, companyID int, pinHash string) error {
+	_, err := r.db.Exec(ctx, `UPDATE users SET pin_hash = $1 WHERE id = $2 AND company_id = $3`, pinHash, userID, companyID)
 	return err
 }
 
@@ -174,10 +181,37 @@ func (r *UserRepository) GetOwnerChatID(ctx context.Context, companyID int) (int
 	err := r.db.QueryRow(ctx, query, companyID).Scan(&chatID)
 	return chatID, err
 }
+// GetByChatID — ИСПРАВЛЕНО: раньше company_id не выбирался, из-за чего
+// у бота user.CompanyID всегда был 0 — все аналитические запросы из бота
+// уходили "в компанию 0" (и из-за отсутствия фильтрации раньше это не было
+// заметно, так как фильтрации не было вообще).
+// GetAllOwnersWithTelegram — все owner'ы всех компаний, у кого привязан Telegram.
+// Используется планировщиком ежедневных отчётов: отчёт должен уходить каждому
+// владельцу строго по ЕГО company_id, а не по одному "глобальному" company_id
+// (которого в многотенантной системе просто не существует).
+func (r *UserRepository) GetAllOwnersWithTelegram(ctx context.Context) ([]domain.User, error) {
+	query := `SELECT id, company_id, tg_chat_id FROM users WHERE role = 'owner' AND tg_chat_id IS NOT NULL`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var owners []domain.User
+	for rows.Next() {
+		var u domain.User
+		if err := rows.Scan(&u.ID, &u.CompanyID, &u.TgChatID); err != nil {
+			return nil, err
+		}
+		owners = append(owners, u)
+	}
+	return owners, rows.Err()
+}
+
 func (r *UserRepository) GetByChatID(ctx context.Context, chatID int64) (domain.User, error) {
 	var user domain.User
-	query := `SELECT id, username, role, tg_chat_id FROM users WHERE tg_chat_id = $1`
-	err := r.db.QueryRow(ctx, query, chatID).Scan(&user.ID, &user.Username, &user.Role, &user.TgChatID)
+	query := `SELECT id, company_id, username, role, tg_chat_id FROM users WHERE tg_chat_id = $1`
+	err := r.db.QueryRow(ctx, query, chatID).Scan(&user.ID, &user.CompanyID, &user.Username, &user.Role, &user.TgChatID)
 	return user, err
 }
 func (r *UserRepository) ClaimTgLinkToken(ctx context.Context, token string, chatID int64) (*domain.User, error) {
