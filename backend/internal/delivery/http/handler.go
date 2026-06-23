@@ -4,7 +4,9 @@ import (
 	"os"
 	"retail-managment-system/internal/delivery/telegram"
 	"retail-managment-system/internal/middleware"
+	"retail-managment-system/internal/ratelimit"
 	"retail-managment-system/internal/repository"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,6 +20,13 @@ type Handler struct {
 	shopRepo    *repository.ShopRepository
 	tgBot       *telegram.Bot
 	dbPool      *pgxpool.Pool
+
+	// Rate limiting на вход (см. internal/ratelimit) — защита от подбора
+	// пароля владельца и особенно 4-значного PIN продавца.
+	loginLimiter   *ratelimit.Limiter // по ключу IP+username
+	loginIPLimiter *ratelimit.Limiter // по ключу IP (от распределённого перебора логинов)
+	pinLimiter     *ratelimit.Limiter // по ключу IP+company_id+user_id
+	pinIPLimiter   *ratelimit.Limiter // по ключу IP (от перебора чужих user_id с одного адреса)
 }
 
 func NewHandler(
@@ -37,6 +46,14 @@ func NewHandler(
 		shopRepo:    shopRepo,
 		tgBot:       tgBot,
 		dbPool:      dbPool,
+
+		// 5 неудачных попыток за 15 минут -> блок на 15 минут для конкретной пары IP+username/PIN.
+		loginLimiter: ratelimit.New(5, 15*time.Minute, 15*time.Minute),
+		pinLimiter:   ratelimit.New(5, 15*time.Minute, 15*time.Minute),
+		// Более мягкий, но всё же ограничивающий лимит по IP в целом —
+		// чтобы нельзя было перебирать много разных username/user_id с одного адреса.
+		loginIPLimiter: ratelimit.New(30, 15*time.Minute, 30*time.Minute),
+		pinIPLimiter:   ratelimit.New(30, 15*time.Minute, 30*time.Minute),
 	}
 }
 

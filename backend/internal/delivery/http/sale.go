@@ -21,6 +21,7 @@ func (h *Handler) executeSale(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 	sellerID := c.MustGet("user_id").(int)
 	saleID, lowStockItems, err := h.saleRepo.ExecuteSale(context.Background(), companyID, sellerID, input.Items, input.Total)
+	log.Println(err)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return

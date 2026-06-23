@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -150,9 +151,12 @@ func (h *Handler) setUserPin(c *gin.Context) {
 }
 
 // pinLogin — вход продавца через PIN в режиме терминала.
-// ИСПРАВЛЕНО: теперь PIN проверяется в паре с company_id (через
-// GetByIDAndCompany), а не по голому user_id — иначе подбор 4-значного
-// PIN мог сработать против пользователя любой другой компании.
+// ИСПРАВЛЕНО: PIN проверяется в паре с company_id (через GetByIDAndCompany),
+// а не по голому user_id. ДОБАВЛЕНО: rate limiting — PIN это всего 4 цифры
+// (10000 комбинаций), без лимита его можно подобрать скриптом за разумное
+// время. Теперь после 5 неудачных попыток на пару (IP+company_id+user_id)
+// вход блокируется на 15 минут, плюс есть более мягкий лимит по самому IP
+// (от перебора чужих user_id с одного устройства).
 func (h *Handler) pinLogin(c *gin.Context) {
 	var req domain.PinLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -160,16 +164,42 @@ func (h *Handler) pinLogin(c *gin.Context) {
 		return
 	}
 
+	ip := c.ClientIP()
+	attemptKey := fmt.Sprintf("pin:%s:%d:%d", ip, req.CompanyID, req.UserID)
+	ipKey := "pin_ip:" + ip
+
+	if allowed, retryAfter := h.pinIPLimiter.Allowed(ipKey); !allowed {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error":               "too_many_attempts",
+			"message":             "Слишком много попыток входа с этого устройства. Попробуйте позже.",
+			"retry_after_seconds": int(retryAfter.Seconds()),
+		})
+		return
+	}
+	if allowed, retryAfter := h.pinLimiter.Allowed(attemptKey); !allowed {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error":               "too_many_attempts",
+			"message":             "Слишком много неверных попыток PIN. Попробуйте позже.",
+			"retry_after_seconds": int(retryAfter.Seconds()),
+		})
+		return
+	}
+
 	user, err := h.userRepo.GetByIDAndCompany(context.Background(), req.UserID, req.CompanyID)
 	if err != nil || user.PinHash == "" {
+		h.pinLimiter.RecordFailure(attemptKey)
+		h.pinIPLimiter.RecordFailure(ipKey)
 		c.JSON(401, gin.H{"error": "PIN не установлен"})
 		return
 	}
 
 	if !auth.CheckPasswordHash(req.Pin, user.PinHash) {
+		h.pinLimiter.RecordFailure(attemptKey)
+		h.pinIPLimiter.RecordFailure(ipKey)
 		c.JSON(401, gin.H{"error": "Неверный PIN"})
 		return
 	}
+	h.pinLimiter.Reset(attemptKey)
 
 	token, errToken := auth.GenerateToken(user.ID, user.CompanyID, user.Role, os.Getenv("JWT_SECRET"))
 	if errToken != nil {

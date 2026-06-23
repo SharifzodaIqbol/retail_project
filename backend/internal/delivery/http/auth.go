@@ -9,6 +9,7 @@ import (
 	"retail-managment-system/internal/auth"
 	"retail-managment-system/internal/domain"
 	"retail-managment-system/internal/repository"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -49,6 +50,9 @@ func (h *Handler) register(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{"status": "success"})
 }
+// login — вход владельца по username+password.
+// ИСПРАВЛЕНО: добавлен rate limiting (см. internal/ratelimit) — без него
+// пароль можно было подбирать без ограничений.
 func (h *Handler) login(c *gin.Context) {
 	var req domain.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -56,11 +60,36 @@ func (h *Handler) login(c *gin.Context) {
 		return
 	}
 
+	ip := c.ClientIP()
+	userKey := "login:" + ip + ":" + strings.ToLower(req.Username)
+	ipKey := "login_ip:" + ip
+
+	if allowed, retryAfter := h.loginIPLimiter.Allowed(ipKey); !allowed {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error":               "too_many_attempts",
+			"message":             "Слишком много попыток входа с этого устройства/сети. Попробуйте позже.",
+			"retry_after_seconds": int(retryAfter.Seconds()),
+		})
+		return
+	}
+	if allowed, retryAfter := h.loginLimiter.Allowed(userKey); !allowed {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error":               "too_many_attempts",
+			"message":             "Слишком много неудачных попыток входа. Попробуйте позже.",
+			"retry_after_seconds": int(retryAfter.Seconds()),
+		})
+		return
+	}
+
 	user, err := h.userRepo.GetByUsername(context.Background(), req.Username)
 	if err != nil || !auth.CheckPasswordHash(req.Password, user.PasswordHash) {
+		h.loginLimiter.RecordFailure(userKey)
+		h.loginIPLimiter.RecordFailure(ipKey)
 		c.JSON(401, gin.H{"error": "Неверный логин или пароль"})
 		return
 	}
+	h.loginLimiter.Reset(userKey)
+
 	token, errToken := auth.GenerateToken(user.ID, user.CompanyID, user.Role, os.Getenv("JWT_SECRET"))
 	if errToken != nil {
 		log.Println("Ошибка генерации JWT токена:", errToken)

@@ -40,7 +40,7 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID int, sellerI
 	for _, item := range items {
 		_, err = tx.Exec(ctx, `INSERT INTO sale_items 
 							   (sale_id, company_id, product_id, quantity, price_at_sale) 
-							   VALUES ($1, $2, $3, $4)`,
+							   VALUES ($1, $2, $3, $4, $5)`,
 			saleID, companyID, item.ProductID, item.Quantity, item.PriceAtSale)
 		if err != nil {
 			return 0, nil, err
