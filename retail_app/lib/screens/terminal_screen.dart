@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
+import '../widgets/rate_limit_banner.dart';
 
 /// Экран терминального режима.
 /// Показывается когда terminal_mode=true и пользователь не залогинен.
@@ -311,7 +312,13 @@ class _PinInputSheetState extends State<_PinInputSheet> {
   bool _loading = false;
   String? _error;
 
+  // Заполняется при 429 от backend — баннер с обратным отсчётом и
+  // блокировка клавиатуры до истечения этого времени.
+  int? _rateLimitSeconds;
+  String _rateLimitMessage = '';
+
   void _onKey(String digit) {
+    if (isRateLimited(_rateLimitSeconds)) return;
     if (_pin.length >= 4) return;
     setState(() {
       _pin += digit;
@@ -321,21 +328,33 @@ class _PinInputSheetState extends State<_PinInputSheet> {
   }
 
   void _onBackspace() {
+    if (isRateLimited(_rateLimitSeconds)) return;
     if (_pin.isEmpty) return;
     setState(() => _pin = _pin.substring(0, _pin.length - 1));
   }
 
   Future<void> _submit() async {
     setState(() => _loading = true);
-    final result = await _api.pinLogin(widget.userId, widget.companyId, _pin);
-    if (!mounted) return;
-    if (result != null) {
-      widget.onSuccess(result['token'], result['role'], result['username']);
-    } else {
+    try {
+      final result = await _api.pinLogin(widget.userId, widget.companyId, _pin);
+      if (!mounted) return;
+      if (result != null) {
+        widget.onSuccess(result['token'], result['role'], result['username']);
+      } else {
+        setState(() {
+          _error = 'Неверный PIN';
+          _pin = '';
+          _loading = false;
+        });
+      }
+    } on RateLimitException catch (e) {
+      if (!mounted) return;
       setState(() {
-        _error = 'Неверный PIN';
-        _pin = '';
         _loading = false;
+        _pin = '';
+        _error = null;
+        _rateLimitSeconds = e.retryAfterSeconds;
+        _rateLimitMessage = e.message;
       });
     }
   }
@@ -406,10 +425,24 @@ class _PinInputSheetState extends State<_PinInputSheet> {
             ),
           ],
 
+          if (_rateLimitSeconds != null) ...[
+            const SizedBox(height: 16),
+            RateLimitBanner(
+              initialSeconds: _rateLimitSeconds!,
+              message: _rateLimitMessage,
+              onExpired: () {
+                if (!mounted) return;
+                setState(() => _rateLimitSeconds = null);
+              },
+            ),
+          ],
+
           const SizedBox(height: 28),
 
           if (_loading)
             const CircularProgressIndicator(color: Color(0xFF4F6EF7))
+          else if (isRateLimited(_rateLimitSeconds))
+            Opacity(opacity: 0.35, child: _buildKeypad())
           else
             _buildKeypad(),
         ],

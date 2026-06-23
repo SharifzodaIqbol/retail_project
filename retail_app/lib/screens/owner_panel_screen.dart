@@ -63,7 +63,9 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Нажмите кнопку ниже, чтобы открыть Telegram и привязать аккаунт автоматически.'),
+            const Text(
+              'Нажмите кнопку ниже, чтобы открыть Telegram и привязать аккаунт автоматически.',
+            ),
             const SizedBox(height: 8),
             const Text(
               'Ссылка действительна 10 минут.',
@@ -82,7 +84,10 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                   Expanded(
                     child: Text(
                       deeplink,
-                      style: const TextStyle(fontSize: 11, color: Colors.black54),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Colors.black54,
+                      ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -108,8 +113,13 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
           ),
           ElevatedButton.icon(
             icon: const Icon(Icons.telegram, color: Colors.white),
-            label: const Text('Открыть Telegram', style: TextStyle(color: Colors.white)),
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0088CC)),
+            label: const Text(
+              'Открыть Telegram',
+              style: TextStyle(color: Colors.white),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0088CC),
+            ),
             onPressed: () async {
               Navigator.pop(context);
               final uri = Uri.parse(deeplink);
@@ -133,11 +143,17 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
         title: const Text('Отвязать Telegram?'),
         content: const Text('Уведомления о продажах перестанут приходить.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Отвязать', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Отвязать',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -178,9 +194,14 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F6EF7)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF4F6EF7),
+            ),
             onPressed: () async {
               if (pinCtrl.text.length != 4) return;
               final ok = await _api.setUserPin(user['id'], pinCtrl.text);
@@ -189,15 +210,24 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
               if (ok) {
                 _load();
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('PIN установлен'), backgroundColor: Colors.green),
+                  const SnackBar(
+                    content: Text('PIN установлен'),
+                    backgroundColor: Colors.green,
+                  ),
                 );
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Ошибка'), backgroundColor: Colors.red),
+                  const SnackBar(
+                    content: Text('Ошибка'),
+                    backgroundColor: Colors.red,
+                  ),
                 );
               }
             },
-            child: const Text('Сохранить', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Сохранить',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -226,9 +256,14 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
           'Приложение перейдёт в режим кассы.\nСотрудники смогут входить по PIN.\nДля выхода удержите кнопку и введите ваш пароль.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F6EF7)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF4F6EF7),
+            ),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Перейти', style: TextStyle(color: Colors.white)),
           ),
@@ -266,7 +301,10 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: usernameCtrl,
-                  decoration: const InputDecoration(labelText: 'Имя продавца', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                    labelText: 'Имя продавца',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -285,9 +323,14 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Отмена'),
+            ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F6EF7)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF4F6EF7),
+              ),
               onPressed: () async {
                 if (usernameCtrl.text.isEmpty) return;
                 if (pinCtrl.text.length != 4) {
@@ -308,15 +351,24 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                   Navigator.pop(ctx);
                   _load();
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Продавец добавлен!'), backgroundColor: Colors.green),
+                    const SnackBar(
+                      content: Text('Продавец добавлен!'),
+                      backgroundColor: Colors.green,
+                    ),
                   );
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Ошибка. Имя уже занято?'), backgroundColor: Colors.red),
+                    const SnackBar(
+                      content: Text('Ошибка. Имя уже занято?'),
+                      backgroundColor: Colors.red,
+                    ),
                   );
                 }
               },
-              child: const Text('Создать', style: TextStyle(color: Colors.white)),
+              child: const Text(
+                'Создать',
+                style: TextStyle(color: Colors.white),
+              ),
             ),
           ],
         ),
@@ -331,7 +383,10 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
         title: const Text('Удалить сотрудника?'),
         content: Text('Пользователь "$username" будет удалён.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(context, true),
@@ -351,7 +406,10 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
-        title: const Text('Панель владельца', style: TextStyle(fontWeight: FontWeight.w700)),
+        title: const Text(
+          'Панель владельца',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black87,
         elevation: 0,
@@ -377,12 +435,14 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                     onTap: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(
-                          builder: (_) => const ShopsScreen(),
-                        ),
+                        MaterialPageRoute(builder: (_) => const ShopsScreen()),
                       );
                     },
-                    trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                    trailing: const Icon(
+                      Icons.arrow_forward_ios,
+                      size: 16,
+                      color: Colors.grey,
+                    ),
                   ),
 
                   const SizedBox(height: 24),
@@ -396,7 +456,11 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                     title: 'Перевести в кассовый режим',
                     subtitle: 'Сотрудники входят по PIN-коду',
                     onTap: _enterTerminalMode,
-                    trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                    trailing: const Icon(
+                      Icons.arrow_forward_ios,
+                      size: 16,
+                      color: Colors.grey,
+                    ),
                   ),
 
                   const SizedBox(height: 24),
@@ -407,14 +471,24 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                   _ActionCard(
                     icon: Icons.telegram,
                     iconColor: const Color(0xFF0088CC),
-                    title: _tgLinked ? 'Telegram привязан' : 'Привязать Telegram',
+                    title: _tgLinked
+                        ? 'Telegram привязан'
+                        : 'Привязать Telegram',
                     subtitle: _tgLinked
                         ? 'Вы получаете уведомления о продажах'
                         : 'Получайте уведомления о продажах',
                     onTap: _tgLinked ? _unlinkTelegram : _linkTelegram,
                     trailing: _tgLinked
-                        ? const Icon(Icons.check_circle, color: Colors.green, size: 20)
-                        : const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                        ? const Icon(
+                            Icons.check_circle,
+                            color: Colors.green,
+                            size: 20,
+                          )
+                        : const Icon(
+                            Icons.arrow_forward_ios,
+                            size: 16,
+                            color: Colors.grey,
+                          ),
                     subtitleColor: _tgLinked ? Colors.green : null,
                   ),
 
@@ -433,13 +507,15 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  ..._users.map((u) => _UserTile(
-                        user: u,
-                        onSetPin: () => _showSetPinDialog(u),
-                        onDelete: u['role'] != 'owner'
-                            ? () => _deleteUser(u['id'], u['username'])
-                            : null,
-                      )),
+                  ..._users.map(
+                    (u) => _UserTile(
+                      user: u,
+                      onSetPin: () => _showSetPinDialog(u),
+                      onDelete: u['role'] != 'owner'
+                          ? () => _deleteUser(u['id'], u['username'])
+                          : null,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -455,14 +531,14 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Text(
-        title.toUpperCase(),
-        style: const TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: Colors.grey,
-          letterSpacing: 1.2,
-        ),
-      );
+    title.toUpperCase(),
+    style: const TextStyle(
+      fontSize: 11,
+      fontWeight: FontWeight.w700,
+      color: Colors.grey,
+      letterSpacing: 1.2,
+    ),
+  );
 }
 
 class _ActionCard extends StatelessWidget {
@@ -514,7 +590,10 @@ class _ActionCard extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                    ),
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -540,11 +619,7 @@ class _UserTile extends StatelessWidget {
   final VoidCallback onSetPin;
   final VoidCallback? onDelete;
 
-  const _UserTile({
-    required this.user,
-    required this.onSetPin,
-    this.onDelete,
-  });
+  const _UserTile({required this.user, required this.onSetPin, this.onDelete});
 
   @override
   Widget build(BuildContext context) {
@@ -570,7 +645,9 @@ class _UserTile extends StatelessWidget {
                 : const Color(0xFF4F6EF7).withOpacity(0.1),
             child: Icon(
               isOwner ? Icons.star : Icons.person,
-              color: isOwner ? const Color(0xFFFFD700) : const Color(0xFF4F6EF7),
+              color: isOwner
+                  ? const Color(0xFFFFD700)
+                  : const Color(0xFF4F6EF7),
               size: 20,
             ),
           ),
@@ -581,7 +658,10 @@ class _UserTile extends StatelessWidget {
               children: [
                 Text(
                   user['username'] ?? '',
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
                 ),
                 Row(
                   children: [
@@ -595,12 +675,25 @@ class _UserTile extends StatelessWidget {
                     if (hasPin) ...[
                       const SizedBox(width: 8),
                       const Icon(Icons.pin, size: 13, color: Colors.green),
-                      const Text(' PIN', style: TextStyle(fontSize: 12, color: Colors.green)),
+                      const Text(
+                        ' PIN',
+                        style: TextStyle(fontSize: 12, color: Colors.green),
+                      ),
                     ],
                     if (hasTg) ...[
                       const SizedBox(width: 8),
-                      const Icon(Icons.telegram, size: 13, color: Color(0xFF0088CC)),
-                      const Text(' TG', style: TextStyle(fontSize: 12, color: Color(0xFF0088CC))),
+                      const Icon(
+                        Icons.telegram,
+                        size: 13,
+                        color: Color(0xFF0088CC),
+                      ),
+                      const Text(
+                        ' TG',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF0088CC),
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -619,7 +712,11 @@ class _UserTile extends StatelessWidget {
           ),
           if (onDelete != null)
             IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.red, size: 22),
+              icon: const Icon(
+                Icons.delete_outline,
+                color: Colors.red,
+                size: 22,
+              ),
               onPressed: onDelete,
             ),
         ],

@@ -345,11 +345,28 @@ class _BarcodeStripe extends StatelessWidget {
   const _BarcodeStripe({required this.height, required this.barCount});
 
   static const List<double> _widths = [
-    2, 5, 2, 8, 3,
-    2, 6, 2, 4, 2,
-    9, 2, 3, 5, 
-    2, 7, 2, 4, 
-    2, 6, 3, 2,
+    2,
+    5,
+    2,
+    8,
+    3,
+    2,
+    6,
+    2,
+    4,
+    2,
+    9,
+    2,
+    3,
+    5,
+    2,
+    7,
+    2,
+    4,
+    2,
+    6,
+    3,
+    2,
   ];
 
   @override

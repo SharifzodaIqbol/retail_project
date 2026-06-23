@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/product.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/data_refresh_service.dart';
 
 class InventoryScreen extends StatefulWidget {
   const InventoryScreen({super.key});
@@ -10,7 +11,8 @@ class InventoryScreen extends StatefulWidget {
   State<InventoryScreen> createState() => _InventoryScreenState();
 }
 
-class _InventoryScreenState extends State<InventoryScreen> {
+class _InventoryScreenState extends State<InventoryScreen>
+    with AutoRefreshMixin<InventoryScreen> {
   final _api = ApiService();
   final _authService = AuthService();
   final _searchCtrl = TextEditingController();
@@ -21,10 +23,16 @@ class _InventoryScreenState extends State<InventoryScreen> {
   String _role = '';
 
   @override
+  Stream<void> get refreshStream =>
+      DataRefreshService.instance.onProductChanged;
+
+  @override
+  Future<void> loadData() => _loadProducts();
+
+  @override
   void initState() {
     super.initState();
     _loadRole();
-    _loadProducts();
     _searchCtrl.addListener(_filter);
   }
 

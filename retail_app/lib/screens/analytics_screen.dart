@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/data_refresh_service.dart';
 
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key});
@@ -9,7 +10,7 @@ class AnalyticsScreen extends StatefulWidget {
 }
 
 class _AnalyticsScreenState extends State<AnalyticsScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, AutoRefreshMixin<AnalyticsScreen> {
   final _api = ApiService();
   late TabController _tabController;
 
@@ -23,10 +24,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   List<dynamic> _sellers = [];
 
   @override
+  Stream<void> get refreshStream =>
+      DataRefreshService.instance.onAnalyticsChanged;
+
+  @override
+  Future<void> loadData() => _loadAll();
+
+  @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _loadAll();
   }
 
   @override
@@ -79,10 +86,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadAll,
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadAll),
         ],
       ),
       body: _loading
@@ -268,10 +272,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             color: Colors.white,
             borderRadius: BorderRadius.circular(12),
             boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.04),
-                blurRadius: 8,
-              ),
+              BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8),
             ],
           ),
           child: Column(
@@ -330,16 +331,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _statChip(
-                    'Выручка',
-                    _fmt(p['total_revenue']),
-                    Colors.blue,
-                  ),
-                  _statChip(
-                    'Прибыль',
-                    _fmt(p['total_profit']),
-                    Colors.green,
-                  ),
+                  _statChip('Выручка', _fmt(p['total_revenue']), Colors.blue),
+                  _statChip('Прибыль', _fmt(p['total_profit']), Colors.green),
                 ],
               ),
             ],
@@ -474,10 +467,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                     ),
                     Text(
                       '${s['sales_count']} продаж',
-                      style: const TextStyle(
-                        color: Colors.grey,
-                        fontSize: 13,
-                      ),
+                      style: const TextStyle(color: Colors.grey, fontSize: 13),
                     ),
                   ],
                 ),
@@ -554,21 +544,14 @@ class _PeriodSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const periods = {
-      'today': 'Сегодня',
-      'week': 'Неделя',
-      'month': 'Месяц',
-    };
+    const periods = {'today': 'Сегодня', 'week': 'Неделя', 'month': 'Месяц'};
 
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-          ),
+          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8),
         ],
       ),
       padding: const EdgeInsets.all(4),

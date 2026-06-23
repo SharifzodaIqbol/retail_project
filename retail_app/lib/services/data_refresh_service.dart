@@ -13,6 +13,7 @@ class DataRefreshService {
   final _saleController = StreamController<void>.broadcast();
   final _productController = StreamController<void>.broadcast();
   final _usersController = StreamController<void>.broadcast();
+  final _analyticsController = StreamController<void>.broadcast();
 
   /// Слушать обновления продаж
   Stream<void> get onSaleChanged => _saleController.stream;
@@ -23,6 +24,8 @@ class DataRefreshService {
   /// Слушать обновления сотрудников
   Stream<void> get onUsersChanged => _usersController.stream;
 
+  Stream<void> get onAnalyticsChanged => _analyticsController.stream;
+
   /// Вызвать после успешной продажи
   void notifySaleChanged() => _saleController.add(null);
 
@@ -31,6 +34,8 @@ class DataRefreshService {
 
   /// Вызвать после изменения пользователей
   void notifyUsersChanged() => _usersController.add(null);
+
+  void notifyAnalyticsChanged() => _analyticsController.add(null);
 
   void dispose() {
     _saleController.close();

@@ -5,31 +5,47 @@ import 'package:retail_app/helpers/device_info_helper.dart';
 import 'api_service.dart';
 
 class AuthService {
-  // Существующий метод login остается без изменений...
+  /// Вход владельца по логину/паролю.
+  ///
+  /// Бросает [RateLimitException], если backend ответил 429 (слишком много
+  /// неверных попыток подряд) — экран должен показать обратный отсчёт
+  /// из `retryAfterSeconds` и заблокировать форму на это время.
   Future<Map<String, dynamic>?> login(String username, String password) async {
+    http.Response response;
     try {
-      final response = await http
+      response = await http
           .post(
             Uri.parse('${ApiService.baseUrl}/login'),
             body: jsonEncode({'username': username, 'password': password}),
             headers: {'Content-Type': 'application/json'},
           )
           .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('jwt_token', data['token']);
-        await prefs.setString('user_role', data['role']);
-        await prefs.setString('username', data['username'] ?? username);
-        await prefs.setInt('company_id', data['company_id'] ?? 0);
-        await prefs.setString('company_name', data['company_name'] ?? '');
-        return data;
-      }
-      return null;
     } catch (e) {
+      // Сетевая ошибка/таймаут — не считаем это неудачной попыткой входа.
       return null;
     }
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('jwt_token', data['token']);
+      await prefs.setString('user_role', data['role']);
+      await prefs.setString('username', data['username'] ?? username);
+      await prefs.setInt('company_id', data['company_id'] ?? 0);
+      await prefs.setString('company_name', data['company_name'] ?? '');
+      return data;
+    }
+
+    if (response.statusCode == 429) {
+      final data = jsonDecode(response.body);
+      throw RateLimitException(
+        (data['retry_after_seconds'] as num?)?.toInt() ?? 60,
+        (data['message'] as String?) ??
+            'Слишком много попыток. Попробуйте позже.',
+      );
+    }
+
+    return null;
   }
 
   // Регистрация компании

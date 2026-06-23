@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../widgets/rate_limit_banner.dart';
 import 'register_screen.dart';
 
 // ─── Цвета бренда (общие для всего приложения) ──────────────────────────────
@@ -26,6 +28,11 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   bool _obscurePassword = true;
 
+  // Заполняется, когда backend возвращает 429 — отображаем баннер с
+  // обратным отсчётом и блокируем форму до истечения этого времени.
+  int? _rateLimitSeconds;
+  String _rateLimitMessage = '';
+
   @override
   void dispose() {
     _usernameController.dispose();
@@ -34,17 +41,27 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _handleLogin() async {
-    if (_isLoading) return;
+    if (_isLoading || isRateLimited(_rateLimitSeconds)) return;
 
     setState(() {
       _isLoading = true;
     });
 
-    // Теперь мы знаем, что success — это Map<String, dynamic>? (или null при ошибке)
-    final success = await _authService.login(
-      _usernameController.text.trim(),
-      _passwordController.text,
-    );
+    Map<String, dynamic>? success;
+    try {
+      success = await _authService.login(
+        _usernameController.text.trim(),
+        _passwordController.text,
+      );
+    } on RateLimitException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _rateLimitSeconds = e.retryAfterSeconds;
+        _rateLimitMessage = e.message;
+      });
+      return;
+    }
 
     if (!mounted) return;
 
@@ -129,7 +146,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               const SizedBox(height: 8),
                               _AuthTextField(
                                 controller: _usernameController,
-                                enabled: !_isLoading,
+                                enabled:
+                                    !_isLoading &&
+                                    !isRateLimited(_rateLimitSeconds),
                                 hint: 'Введите логин',
                                 icon: Icons.person_outline,
                                 textInputAction: TextInputAction.next,
@@ -140,7 +159,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               const SizedBox(height: 8),
                               _AuthTextField(
                                 controller: _passwordController,
-                                enabled: !_isLoading,
+                                enabled:
+                                    !_isLoading &&
+                                    !isRateLimited(_rateLimitSeconds),
                                 hint: 'Введите пароль',
                                 icon: Icons.lock_outline,
                                 obscureText: _obscurePassword,
@@ -161,11 +182,27 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                               ),
 
+                              if (_rateLimitSeconds != null) ...[
+                                RateLimitBanner(
+                                  initialSeconds: _rateLimitSeconds!,
+                                  message: _rateLimitMessage,
+                                  onExpired: () {
+                                    if (!mounted) return;
+                                    setState(() => _rateLimitSeconds = null);
+                                  },
+                                ),
+                                const SizedBox(height: 18),
+                              ],
+
                               const SizedBox(height: 28),
                               SizedBox(
                                 height: 54,
                                 child: ElevatedButton(
-                                  onPressed: _isLoading ? null : _handleLogin,
+                                  onPressed:
+                                      (_isLoading ||
+                                          isRateLimited(_rateLimitSeconds))
+                                      ? null
+                                      : _handleLogin,
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: _kPrimary,
                                     disabledBackgroundColor: _kPrimary

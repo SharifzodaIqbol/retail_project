@@ -2,8 +2,22 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'data_refresh_service.dart';
 import '../models/product.dart';
 import '../screens/subscription_expired_screen.dart';
+
+/// Бросается, когда backend вернул 429 (rate limit) на вход по
+/// паролю/PIN — несёт время в секундах, через которое можно повторить
+/// попытку, и человекочитаемое сообщение от сервера.
+class RateLimitException implements Exception {
+  final int retryAfterSeconds;
+  final String message;
+
+  RateLimitException(this.retryAfterSeconds, this.message);
+
+  @override
+  String toString() => message;
+}
 
 class ApiService {
   static const String baseUrl = String.fromEnvironment(
@@ -103,8 +117,16 @@ class ApiService {
           if (reason != null && reason.isNotEmpty) 'reason': reason,
         }),
       );
+
       _checkSubscription(response.statusCode);
-      return response.statusCode == 200;
+
+      if (response.statusCode == 200) {
+        DataRefreshService.instance.notifyProductChanged();
+        DataRefreshService.instance.notifyAnalyticsChanged();
+        return true;
+      }
+
+      return false;
     } catch (e) {
       return false;
     }
@@ -120,7 +142,12 @@ class ApiService {
         body: jsonEncode(saleData),
       );
       _checkSubscription(response.statusCode);
-      return response.statusCode == 200;
+      if (response.statusCode == 200) {
+        DataRefreshService.instance.notifySaleChanged();
+        DataRefreshService.instance.notifyAnalyticsChanged();
+        return true;
+      }
+      return false;
     } catch (e) {
       return false;
     }
@@ -290,13 +317,18 @@ class ApiService {
   /// Войти по PIN (терминальный режим) — возвращает токен, роль, имя.
   /// company_id обязателен: PIN проверяется в паре с компанией, иначе
   /// подбор 4-значного PIN сработал бы против пользователя любой компании.
+  ///
+  /// Бросает [RateLimitException], если backend ответил 429 (слишком много
+  /// неверных попыток подряд) — экран должен показать пользователю обратный
+  /// отсчёт из `retryAfterSeconds` и заблокировать клавиатуру PIN на это время.
   Future<Map<String, dynamic>?> pinLogin(
     int userId,
     int companyId,
     String pin,
   ) async {
+    http.Response response;
     try {
-      final response = await http
+      response = await http
           .post(
             Uri.parse('$baseUrl/terminal/pin-login'),
             headers: const {'Content-Type': 'application/json'},
@@ -307,11 +339,23 @@ class ApiService {
             }),
           )
           .timeout(const Duration(seconds: 10));
-      if (response.statusCode == 200) return jsonDecode(response.body);
-      return null;
     } catch (e) {
+      // Сетевая ошибка/таймаут — не считаем это неудачной попыткой входа.
       return null;
     }
+
+    if (response.statusCode == 200) return jsonDecode(response.body);
+
+    if (response.statusCode == 429) {
+      final data = jsonDecode(response.body);
+      throw RateLimitException(
+        (data['retry_after_seconds'] as num?)?.toInt() ?? 60,
+        (data['message'] as String?) ??
+            'Слишком много попыток. Попробуйте позже.',
+      );
+    }
+
+    return null;
   }
 
   /// Войти как владелец (для выхода из терминального режима)

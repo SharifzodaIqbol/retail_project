@@ -10,6 +10,7 @@ import '../widgets/barcode_scanner.dart';
 import '../providers/cart_provider.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/data_refresh_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback? onSellerLogout;
@@ -195,6 +196,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
     bool success = await _apiService.createSale(saleData);
 
+    if (success) {
+      // Сообщаем всем подписанным экранам (склад, история и т.д.),
+      // что нужно перезагрузить данные с сервера.
+      DataRefreshService.instance.notifySaleChanged();
+      DataRefreshService.instance.notifyProductChanged();
+    }
+
     if (!success) {
       await DatabaseHelper.instance.insertOfflineSale(saleData);
       if (mounted) {
@@ -272,6 +280,11 @@ class _HomeScreenState extends State<HomeScreen> {
         await DatabaseHelper.instance.markSaleAsSynced(row['id']);
         successCount++;
       }
+    }
+
+    if (successCount > 0) {
+      DataRefreshService.instance.notifySaleChanged();
+      DataRefreshService.instance.notifyProductChanged();
     }
 
     if (successCount > 0 && mounted) {
