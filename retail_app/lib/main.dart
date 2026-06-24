@@ -9,6 +9,7 @@ import 'screens/inventory_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/terminal_screen.dart';
 import 'screens/owner_panel_screen.dart';
+import 'screens/debtors_screen.dart';
 import 'services/api_service.dart';
 
 void main() {
@@ -201,6 +202,11 @@ class _MainShellState extends State<MainShell> {
         icon: Icons.inventory_2,
         label: 'Склад',
         screen: const InventoryScreen(),
+      ),
+      _NavItem(
+        icon: Icons.menu_book,
+        label: 'Долги',
+        screen: DebtorsScreen(role: widget.role),
       ),
     ];
 

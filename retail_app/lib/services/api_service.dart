@@ -522,4 +522,92 @@ class ApiService {
       return false;
     }
   }
+
+  Future<List<dynamic>> getDebtors() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$baseUrl/api/debtors'), headers: await _getHeaders())
+          .timeout(const Duration(seconds: 10));
+      _checkSubscription(response.statusCode);
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>?> createDebtor({
+    required String fullName,
+    String phone = '',
+    double initialDebt = 0,
+    String note = '',
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/debtors'),
+        headers: await _getHeaders(),
+        body: jsonEncode({
+          'full_name': fullName,
+          'phone': phone,
+          'initial_debt': initialDebt,
+          'note': note,
+        }),
+      );
+      _checkSubscription(response.statusCode);
+      if (response.statusCode == 201) return jsonDecode(response.body);
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// type: 'pay' — внёс деньги, 'take' — добавить долг
+  Future<Map<String, dynamic>?> debtOperation(
+    int debtorId, {
+    required double amount,
+    required String type,
+    String note = '',
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/debtors/$debtorId/operation'),
+        headers: await _getHeaders(),
+        body: jsonEncode({'amount': amount, 'type': type, 'note': note}),
+      );
+      _checkSubscription(response.statusCode);
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<bool> deleteDebtor(int id) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/debtors/$id'),
+        headers: await _getHeaders(),
+      );
+      _checkSubscription(response.statusCode);
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<List<dynamic>> getDebtHistory(int debtorId) async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/api/debtors/$debtorId/history'),
+            headers: await _getHeaders(),
+          )
+          .timeout(const Duration(seconds: 10));
+      _checkSubscription(response.statusCode);
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
 }

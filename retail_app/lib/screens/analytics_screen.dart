@@ -81,7 +81,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           tabs: const [
             Tab(text: 'Обзор'),
             Tab(text: 'Топ товары'),
-            Tab(text: 'Склад'),
             Tab(text: 'Продавцы'),
           ],
         ),
@@ -96,7 +95,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               children: [
                 _buildOverview(),
                 _buildTopProducts(),
-                _buildLowStock(),
                 _buildSellers(),
               ],
             ),
@@ -342,87 +340,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     );
   }
 
-  // ── Вкладка: Низкий остаток ─────────────────────────────────
-  Widget _buildLowStock() {
-    if (_lowStock.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.check_circle, color: Colors.green, size: 64),
-            SizedBox(height: 12),
-            Text('Все товары в норме!', style: TextStyle(fontSize: 16)),
-          ],
-        ),
-      );
-    }
-
-    return ListView.separated(
-      padding: const EdgeInsets.all(16),
-      itemCount: _lowStock.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, i) {
-        final p = _lowStock[i];
-        final stock = p['stock'] as int;
-        final color = stock <= 3 ? Colors.red : Colors.orange;
-
-        return Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: color.withOpacity(0.3)),
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(Icons.warning_amber, color: color, size: 20),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      p['name'] ?? '',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    Text(
-                      'Осталось: $stock шт.',
-                      style: TextStyle(color: color, fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  '$stock',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   // ── Вкладка: Продавцы ───────────────────────────────────────
   Widget _buildSellers() {
     if (_sellers.isEmpty) {
@@ -522,9 +439,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   String _fmt(dynamic value) {
     if (value == null) return '0';
     final d = (value as num).toDouble();
-    if (d >= 1000) {
-      return '${(d / 1000).toStringAsFixed(1)}к';
-    }
     return d.toStringAsFixed(2);
   }
 
