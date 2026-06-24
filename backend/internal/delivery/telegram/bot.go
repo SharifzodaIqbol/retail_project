@@ -28,18 +28,20 @@ func NewBot(token string) (*Bot, error) {
 	return &Bot{teleBot: b}, nil
 }
 
-func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.UserRepository, productRepo *repository.ProductRepository) {
+func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.UserRepository, productRepo *repository.ProductRepository, debtorRepo *repository.DebtorRepository) {
 	// Создаем меню
 	menu := &telebot.ReplyMarkup{ResizeKeyboard: true}
 	btnStats := menu.Text("📊 Даромади имрӯза")
 	btnProfit := menu.Text("💰 Фоидаи соф")
 	btnTop := menu.Text("🔝 Маҳсулотҳои бисер\nхарида шуда!")
 	btnLowStock := menu.Text("⚠️ Тамом шуда истодааст")
+	btnDebtors := menu.Text("📒 Китоби қарздорон")
 	btnHelp := menu.Text("❓ Кӯмак")
 
 	menu.Reply(
 		menu.Row(btnStats, btnProfit),
 		menu.Row(btnTop, btnLowStock),
+		menu.Row(btnDebtors),
 		menu.Row(btnHelp),
 	)
 
@@ -135,6 +137,33 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		return c.Send(msg, telebot.ModeMarkdown)
 	})
 
+	// Кнопка: Список должников
+	b.teleBot.Handle(&btnDebtors, func(c telebot.Context) error {
+		user, err := userRepo.GetByChatID(context.Background(), c.Chat().ID)
+		if err != nil || user.Role != "owner" {
+			return c.Send("⛔ Танҳо соҳиби мағоза метавонад қарздоронро бубинад.")
+		}
+		debtors, err := debtorRepo.GetAllForTelegram(context.Background(), user.CompanyID)
+		if err != nil {
+			return c.Send("❌ Хатогии базаи маълумот.")
+		}
+		if len(debtors) == 0 {
+			return c.Send("✅ Ҳоло қарздорон нест.")
+		}
+		msg := "📒 *Рӯйхати қарздорон:*\n\n"
+		totalAll := 0.0
+		for i, d := range debtors {
+			phone := ""
+			if d.Phone != "" {
+				phone = fmt.Sprintf(" · %s", d.Phone)
+			}
+			msg += fmt.Sprintf("%d. *%s*%s\n   💸 Қарз: *%.2f сомонӣ*\n\n", i+1, d.FullName, phone, d.TotalDebt)
+			totalAll += d.TotalDebt
+		}
+		msg += fmt.Sprintf("━━━━━━━━━━━━━━━━\n💰 *Ҳамагӣ: %.2f сомонӣ*", totalAll)
+		return c.Send(msg, telebot.ModeMarkdown)
+	})
+
 	b.teleBot.Handle(&btnHelp, func(c telebot.Context) error {
 		return c.Send(
 			"Барои дастрасӣ ба омор профили худро аз замимаи мобилӣ тавассути тугмаи «Пайваст кардани Telegram» истифода баред.",
@@ -163,7 +192,7 @@ func (b *Bot) SendDailyReport(chatID int64, totalDay float64, salesCount int) {
 }
 
 func (b *Bot) SendLowStockAlert(chatID int64, productName string, remainingStock int) {
-	msg := fmt.Sprintf("⚠️ **ДИҚҚАТ: МАҲСУЛОТ КАМ МОНД!**\n\n📦 Маҳсулот: %s\n📉 Танҳо фурӯхта шуд: **%d дона**",
+	msg := fmt.Sprintf("⚠️ **ДИҚҚАТ: МАҲСУЛОТ КАМ МОНД!**\n\n📦 Маҳсулот: %s\n📉 Боқи монд: **%d дона**",
 		productName, remainingStock)
 	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
 }

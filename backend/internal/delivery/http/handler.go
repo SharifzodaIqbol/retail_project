@@ -18,6 +18,7 @@ type Handler struct {
 	userRepo    *repository.UserRepository
 	companyRepo *repository.CompanyRepository
 	shopRepo    *repository.ShopRepository
+	debtorRepo  *repository.DebtorRepository
 	tgBot       *telegram.Bot
 	dbPool      *pgxpool.Pool
 
@@ -35,6 +36,7 @@ func NewHandler(
 	userRepo *repository.UserRepository,
 	companyRepo *repository.CompanyRepository,
 	shopRepo *repository.ShopRepository,
+	debtorRepo *repository.DebtorRepository,
 	tgBot *telegram.Bot,
 	dbPool *pgxpool.Pool,
 ) *Handler {
@@ -44,6 +46,7 @@ func NewHandler(
 		userRepo:    userRepo,
 		companyRepo: companyRepo,
 		shopRepo:    shopRepo,
+		debtorRepo:  debtorRepo,
 		tgBot:       tgBot,
 		dbPool:      dbPool,
 
@@ -128,6 +131,20 @@ func (h *Handler) InitRoutes() *gin.Engine {
 		{
 			tg.POST("/link-token", h.generateTgLinkToken)
 			tg.DELETE("/link", h.unlinkTelegram)
+		}
+
+		// ─── Долговая книга (owner + seller) ──────────────────────────────────
+		debtors := api.Group("/debtors")
+		{
+			debtors.GET("", h.getDebtors)                   // список должников
+			debtors.POST("", h.createDebtor)                // добавить должника
+			debtors.POST("/:id/operation", h.debtOperation) // оплата / новый долг
+			debtors.GET("/:id/history", h.getDebtHistory)   // история операций
+
+			// Удалить должника — только owner
+			debtorsOwner := debtors.Group("")
+			debtorsOwner.Use(middleware.RoleMiddleware("owner"))
+			debtorsOwner.DELETE("/:id", h.deleteDebtor)
 		}
 	}
 

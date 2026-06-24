@@ -150,3 +150,40 @@ type SellerStat struct {
 	SalesCount int     `json:"sales_count"`
 	TotalRev   float64 `json:"total_revenue"`
 }
+
+// ─── Долговая книга ───────────────────────────────────────────────────────────
+
+// Debtor — запись о должнике
+type Debtor struct {
+	ID        int       `json:"id"`
+	CompanyID int       `json:"company_id"`
+	FullName  string    `json:"full_name"`
+	Phone     string    `json:"phone"`
+	TotalDebt float64   `json:"total_debt"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// DebtHistory — одна операция по должнику: взял или вернул
+type DebtHistory struct {
+	ID        int       `json:"id"`
+	DebtorID  int       `json:"debtor_id"`
+	Amount    float64   `json:"amount"`
+	Type      string    `json:"type"` // "take" | "pay"
+	Note      string    `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// CreateDebtorRequest — создать нового должника
+type CreateDebtorRequest struct {
+	FullName    string  `json:"full_name" binding:"required"`
+	Phone       string  `json:"phone"`
+	InitialDebt float64 `json:"initial_debt"` // начальная сумма долга (>0)
+	Note        string  `json:"note"`
+}
+
+// DebtOperationRequest — частичная оплата ("pay") или добавление долга ("take")
+type DebtOperationRequest struct {
+	Amount float64 `json:"amount" binding:"required,gt=0"`
+	Type   string  `json:"type"   binding:"required,oneof=take pay"`
+	Note   string  `json:"note"`
+}
