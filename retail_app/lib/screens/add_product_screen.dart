@@ -18,6 +18,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
   final _sellPriceController = TextEditingController();
   final _stockController = TextEditingController();
 
+  // Единица измерения: 'pcs' (шт) или 'kg' (кг)
+  String _unit = 'pcs';
+
   void _submitData() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -26,7 +29,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
       "barcode": _barcodeController.text,
       "buy_price": double.parse(_buyPriceController.text),
       "sell_price": double.parse(_sellPriceController.text),
-      "stock": int.parse(_stockController.text),
+      // Остаток теперь double — для "кг" допускаются дробные значения (например, 2.5)
+      "stock": double.parse(_stockController.text.replaceAll(',', '.')),
+      "unit": _unit,
     };
 
     final success = await _apiService.addProduct(productData);
@@ -109,13 +114,47 @@ class _AddProductScreenState extends State<AddProductScreen> {
                   ),
                 ],
               ),
-              TextFormField(
-                controller: _stockController,
-                decoration: const InputDecoration(
-                  labelText: 'Количество на складе',
-                ),
-                keyboardType: TextInputType.number,
-                validator: (v) => v!.isEmpty ? 'Введите остаток' : null,
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: TextFormField(
+                      controller: _stockController,
+                      decoration: InputDecoration(
+                        labelText: 'Количество на складе',
+                        helperText: _unit == 'kg'
+                            ? 'Можно указать дробное значение, напр. 2.5'
+                            : null,
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      validator: (v) {
+                        if (v == null || v.isEmpty) return 'Введите остаток';
+                        final parsed = double.tryParse(v.replaceAll(',', '.'));
+                        if (parsed == null) return 'Неверное число';
+                        return null;
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 1,
+                    child: DropdownButtonFormField<String>(
+                      value: _unit,
+                      decoration: const InputDecoration(labelText: 'Единица'),
+                      items: const [
+                        DropdownMenuItem(value: 'pcs', child: Text('шт')),
+                        DropdownMenuItem(value: 'kg', child: Text('кг')),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setState(() => _unit = v);
+                      },
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 30),
               ElevatedButton(

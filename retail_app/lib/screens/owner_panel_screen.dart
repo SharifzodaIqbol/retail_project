@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import 'shops_screen.dart';
+import 'import_products_screen.dart';
 
 /// Панель владельца: управление сотрудниками, PIN, Telegram, терминальный режим
 class OwnerPanelScreen extends StatefulWidget {
@@ -436,6 +437,31 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const ShopsScreen()),
+                      );
+                    },
+                    trailing: const Icon(
+                      Icons.arrow_forward_ios,
+                      size: 16,
+                      color: Colors.grey,
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // ─── Секция: Товары ────────────────────────────────────
+                  _SectionHeader(title: 'Товары'),
+                  const SizedBox(height: 8),
+                  _ActionCard(
+                    icon: Icons.upload_file,
+                    iconColor: const Color(0xFFF59E0B),
+                    title: 'Загрузить товары из Excel',
+                    subtitle: 'Массовое добавление и обновление по штрихкоду',
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const ImportProductsScreen(),
+                        ),
                       );
                     },
                     trailing: const Icon(

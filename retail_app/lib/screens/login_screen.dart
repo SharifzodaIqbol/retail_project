@@ -88,7 +88,7 @@ class _LoginScreenState extends State<LoginScreen> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
           ),
-          content: const Text('Неверный логин или пароль'),
+          content: const Text('Ном ё рамз нодуруст аст!'),
         ),
       );
     }
@@ -124,7 +124,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               const Text(
-                                'С возвращением',
+                                'Хуш омадед!',
                                 style: TextStyle(
                                   fontSize: 22,
                                   fontWeight: FontWeight.w800,
@@ -134,7 +134,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               const SizedBox(height: 6),
                               Text(
-                                'Войдите, чтобы открыть смену',
+                                'Шумо метавонед ба аккаунти худ ворид шавед.',
                                 style: TextStyle(
                                   fontSize: 14,
                                   color: Colors.grey[600],
@@ -142,27 +142,27 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               const SizedBox(height: 28),
 
-                              _FieldLabel('Логин'),
+                              _FieldLabel('Ном'),
                               const SizedBox(height: 8),
                               _AuthTextField(
                                 controller: _usernameController,
                                 enabled:
                                     !_isLoading &&
                                     !isRateLimited(_rateLimitSeconds),
-                                hint: 'Введите логин',
+                                hint: 'Номатонро ворид кунед',
                                 icon: Icons.person_outline,
                                 textInputAction: TextInputAction.next,
                               ),
                               const SizedBox(height: 18),
 
-                              _FieldLabel('Пароль'),
+                              _FieldLabel('Рамз'),
                               const SizedBox(height: 8),
                               _AuthTextField(
                                 controller: _passwordController,
                                 enabled:
                                     !_isLoading &&
                                     !isRateLimited(_rateLimitSeconds),
-                                hint: 'Введите пароль',
+                                hint: 'Рамзатонро ворид кунед',
                                 icon: Icons.lock_outline,
                                 obscureText: _obscurePassword,
                                 textInputAction: TextInputAction.done,
@@ -224,7 +224,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                           ),
                                         )
                                       : const Text(
-                                          'Войти',
+                                          'Дохил',
                                           style: TextStyle(
                                             color: Colors.white,
                                             fontSize: 16,
@@ -258,10 +258,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                         color: Colors.grey,
                                       ),
                                       children: [
-                                        TextSpan(text: 'Новая компания? '),
+                                        TextSpan(text: 'Ширкати нав?'),
                                         TextSpan(
-                                          text:
-                                              'Регистрация · 14 дней бесплатно',
+                                          text: ' Бақайдгирии 14 рӯз ройгон',
                                           style: TextStyle(
                                             color: _kPrimary,
                                             fontWeight: FontWeight.w700,
@@ -336,7 +335,7 @@ class _BrandHeader extends StatelessWidget {
               ),
               const SizedBox(height: 18),
               const Text(
-                'Retail POS',
+                'Савидор',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 28,
@@ -346,7 +345,7 @@ class _BrandHeader extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'Касса и склад в одном месте',
+                'Касса ва анбор дар як ҷо',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.85),
                   fontSize: 13.5,

@@ -108,15 +108,17 @@ class _InventoryScreenState extends State<InventoryScreen>
                   ),
                 ),
                 Text(
-                  'Текущий остаток: ${product.stock} шт.',
+                  'Текущий остаток: ${product.stock} ${product.unitLabel}.',
                   style: const TextStyle(color: Colors.grey),
                 ),
                 const SizedBox(height: 20),
                 TextField(
                   controller: amountCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Добавить количество',
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: InputDecoration(
+                    labelText: 'Добавить количество (${product.unitLabel})',
                     prefixIcon: Icon(Icons.add_box),
                     border: OutlineInputBorder(),
                   ),
@@ -185,7 +187,11 @@ class _InventoryScreenState extends State<InventoryScreen>
                         return;
                       }
 
-                      final amount = int.tryParse(amountCtrl.text) ?? 0;
+                      final amount =
+                          double.tryParse(
+                            amountCtrl.text.replaceAll(',', '.'),
+                          ) ??
+                          0;
                       final sell = double.tryParse(sellCtrl.text) ?? 0;
                       final buy = double.tryParse(buyCtrl.text) ?? 0;
 
@@ -233,7 +239,7 @@ class _InventoryScreenState extends State<InventoryScreen>
     );
   }
 
-  Color _stockColor(int stock) {
+  Color _stockColor(double stock) {
     if (stock <= 3) return Colors.red;
     if (stock <= 10) return Colors.orange;
     return Colors.green;
@@ -365,7 +371,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                                           ),
                                         ),
                                         child: Text(
-                                          '${p.stock} шт.',
+                                          '${p.stock.toStringAsFixed(p.unit == 'kg' ? 2 : 0)} ${p.unitLabel}.',
                                           style: TextStyle(
                                             color: stockColor,
                                             fontWeight: FontWeight.w700,

@@ -100,7 +100,7 @@ class ApiService {
 
   Future<bool> updateInventory(
     int id,
-    int addStock,
+    double addStock,
     double sellPrice,
     double buyPrice, {
     String? reason,
@@ -129,6 +129,54 @@ class ApiService {
       return false;
     } catch (e) {
       return false;
+    }
+  }
+
+  /// Загружает Excel-файл (.xlsx) со списком товаров.
+  /// Ожидаемые колонки (без заголовка в результате — заголовок пропускается
+  /// на backend'е): название | штрихкод | цена закупки | цена продажи | остаток | единица ('шт' или 'кг').
+  /// Возвращает разобранный JSON-ответ {created, updated, errors: [{row, message}]}.
+  /// При сетевой/неожиданной ошибке возвращает null.
+  Future<Map<String, dynamic>?> importProductsExcel(
+    List<int> fileBytes,
+    String fileName,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('jwt_token') ?? '';
+
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/api/products/import'),
+      );
+      request.headers['Authorization'] = 'Bearer $token';
+      request.files.add(
+        http.MultipartFile.fromBytes('file', fileBytes, filename: fileName),
+      );
+
+      final streamed = await request.send().timeout(
+        const Duration(seconds: 60),
+      );
+      final response = await http.Response.fromStream(streamed);
+
+      _checkSubscription(response.statusCode);
+
+      if (response.statusCode == 200) {
+        DataRefreshService.instance.notifyProductChanged();
+        DataRefreshService.instance.notifyAnalyticsChanged();
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+
+      try {
+        return {
+          'error': (jsonDecode(response.body)['error'] ?? 'Ошибка импорта')
+              .toString(),
+        };
+      } catch (_) {
+        return {'error': 'Ошибка импорта'};
+      }
+    } catch (e) {
+      return null;
     }
   }
 

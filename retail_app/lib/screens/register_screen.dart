@@ -55,7 +55,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
           ),
-          content: const Text('Бизнес зарегистрирован! Войдите.'),
+          content: const Text('Тиҷорат ба қайд гирифта шудааст! Ворид шавед.'),
         ),
       );
       Navigator.pop(context);
@@ -67,7 +67,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
           ),
-          content: const Text('Ошибка регистрации. Возможно, логин занят.'),
+          content: const Text(
+            'Хатои бақайдгирӣ. Шояд ном банд бошад, шумо метавонед номи дигар интихоб кунед.',
+          ),
         ),
       );
     }
@@ -105,7 +107,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 const Text(
-                                  'Создать аккаунт',
+                                  'Сохтани аккаунт',
                                   style: TextStyle(
                                     fontSize: 22,
                                     fontWeight: FontWeight.w800,
@@ -115,7 +117,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  '14 дней бесплатно — без привязки карты',
+                                  '14 рӯз ройгон - бидуни бастани корт',
                                   style: TextStyle(
                                     fontSize: 14,
                                     color: Colors.grey[600],
@@ -126,16 +128,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 // ── Шаг 1 ──────────────────────────────
                                 _StepLabel(
                                   number: '1',
-                                  text: 'О вашем бизнесе',
+                                  text: 'Дар бораи тиҷорати шумо',
                                 ),
                                 const SizedBox(height: 12),
                                 _AuthTextField(
                                   controller: _companyController,
-                                  hint: 'Название магазина или компании',
+                                  hint: 'Номи мағоза ё ширкат',
                                   icon: Icons.storefront_outlined,
                                   textInputAction: TextInputAction.next,
                                   validator: (v) => v!.trim().isEmpty
-                                      ? 'Введите название'
+                                      ? 'Номро ворид кунед'
                                       : null,
                                 ),
 
@@ -144,28 +146,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 // ── Шаг 2 ──────────────────────────────
                                 _StepLabel(
                                   number: '2',
-                                  text: 'Данные для входа',
+                                  text: 'Маълумоти воридшавӣ',
                                 ),
                                 const SizedBox(height: 12),
                                 _AuthTextField(
                                   controller: _usernameController,
-                                  hint: 'Логин администратора',
+                                  hint: 'Номи соҳибкор',
                                   icon: Icons.person_outline,
                                   textInputAction: TextInputAction.next,
                                   validator: (v) => v!.trim().isEmpty
-                                      ? 'Введите логин'
+                                      ? 'Номатонро ворид кунед'
                                       : null,
                                 ),
                                 const SizedBox(height: 14),
                                 _AuthTextField(
                                   controller: _passwordController,
-                                  hint: 'Пароль (от 6 символов)',
+                                  hint: 'Рамз (на камтар аз 6 аломат)',
                                   icon: Icons.lock_outline,
                                   obscureText: _obscurePassword,
                                   textInputAction: TextInputAction.done,
                                   onSubmitted: (_) => _handleRegister(),
                                   validator: (v) => v!.length < 6
-                                      ? 'Минимум 6 символов'
+                                      ? 'Ками-кам 6 аломат ворид кардан лозим аст.'
                                       : null,
                                   suffix: IconButton(
                                     splashRadius: 20,
@@ -212,7 +214,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                             ),
                                           )
                                         : const Text(
-                                            'Зарегистрировать бизнес',
+                                            'Ба қайд гирифтани ширкат/мағоза',
                                             style: TextStyle(
                                               color: Colors.white,
                                               fontSize: 16,
@@ -238,9 +240,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                           color: Colors.grey,
                                         ),
                                         children: [
-                                          TextSpan(text: 'Уже есть аккаунт? '),
                                           TextSpan(
-                                            text: 'Войти',
+                                            text: 'Аллакай аккаунт доред? ',
+                                          ),
+                                          TextSpan(
+                                            text: 'Дохил',
                                             style: TextStyle(
                                               color: _kPrimary,
                                               fontWeight: FontWeight.w700,
@@ -314,7 +318,7 @@ class _RegisterHeader extends StatelessWidget {
               ),
               const SizedBox(height: 18),
               const Text(
-                'Retail POS',
+                'Савидор',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 28,
@@ -324,7 +328,7 @@ class _RegisterHeader extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'Зарегистрируйте свой магазин',
+                'Мағозаи худро ба қайд гиред',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.85),
                   fontSize: 13.5,
