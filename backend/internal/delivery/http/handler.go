@@ -83,6 +83,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 		api.GET("/products/:barcode", h.getProductByBarcode)
 		api.GET("/products", h.getAllProducts)
 		api.POST("/products", h.createProduct)
+		api.POST("/products/import", h.importProducts)
 		api.PATCH("/products/:id/inventory", h.updateInventory)
 		api.DELETE("/products/:id", h.deleteProduct)
 

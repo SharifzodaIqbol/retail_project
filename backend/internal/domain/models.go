@@ -36,6 +36,13 @@ type TrialCheckResult struct {
 	Allowed bool
 	Reason  TrialDeniedReason
 }
+
+// Unit — единица измерения товара.
+const (
+	UnitPcs = "pcs" // штуки
+	UnitKg  = "kg"  // килограммы (поддерживает дробный остаток)
+)
+
 type Product struct {
 	ID        int     `json:"id"`
 	CompanyID int     `json:"company_id"`
@@ -44,8 +51,22 @@ type Product struct {
 	Barcode   string  `json:"barcode"`
 	BuyPrice  float64 `json:"buy_price"`
 	SellPrice float64 `json:"sell_price"`
-	Stock     int     `json:"stock"`
-	IsActive  bool    `json:"is_active"`
+	// Stock — float64, так как товары с unit = "kg" могут иметь дробный остаток (например, 2.5 кг).
+	Stock    float64 `json:"stock"`
+	Unit     string  `json:"unit"`
+	IsActive bool    `json:"is_active"`
+}
+
+// ProductImportResult — отчёт об импорте товаров из Excel.
+type ProductImportResult struct {
+	Created int                  `json:"created"`
+	Updated int                  `json:"updated"`
+	Errors  []ProductImportError `json:"errors"`
+}
+
+type ProductImportError struct {
+	Row     int    `json:"row"`
+	Message string `json:"message"`
 }
 
 type SaleItem struct {
