@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"log"
 	"retail-managment-system/internal/repository"
 	"strings"
 	"time"
@@ -112,6 +113,7 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		}
 		report, err := saleRepo.GetTopProducts(context.Background(), user.CompanyID, 5)
 		if err != nil {
+			log.Println(err)
 			return c.Send("❌ Хато шуд барои дидани борҳои бисер харида шуда!")
 		}
 		return c.Send(report, telebot.ModeMarkdown)
@@ -132,7 +134,11 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		}
 		msg := "🚨 **Маҳсулоти каммонда:**\n"
 		for _, p := range products {
-			msg += fmt.Sprintf("• %s: **%d дона.**\n", p.Name, p.Stock)
+			unit := "дона"
+			if p.Unit == "kg" {
+				unit = "кг"
+			}
+			msg += fmt.Sprintf("• %s: **%g %s.**\n", p.Name, p.Stock, unit)
 		}
 		return c.Send(msg, telebot.ModeMarkdown)
 	})
@@ -191,9 +197,9 @@ func (b *Bot) SendDailyReport(chatID int64, totalDay float64, salesCount int) {
 	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
 }
 
-func (b *Bot) SendLowStockAlert(chatID int64, productName string, remainingStock int) {
-	msg := fmt.Sprintf("⚠️ **ДИҚҚАТ: МАҲСУЛОТ КАМ МОНД!**\n\n📦 Маҳсулот: %s\n📉 Боқи монд: **%d дона**",
-		productName, remainingStock)
+func (b *Bot) SendLowStockAlert(chatID int64, productName string, remainingStock float64, unit string) {
+	msg := fmt.Sprintf("⚠️ **ДИҚҚАТ: МАҲСУЛОТ КАМ МОНД!**\n\n📦 Маҳсулот: %s\n📉 Боқи монд: **%g** %s",
+		productName, remainingStock, unit)
 	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
 }
 

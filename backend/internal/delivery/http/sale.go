@@ -15,6 +15,7 @@ func (h *Handler) executeSale(c *gin.Context) {
 		Total float64           `json:"total_amount"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Println(err)
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -31,7 +32,7 @@ func (h *Handler) executeSale(c *gin.Context) {
 		ownerID, _ := h.userRepo.GetOwnerChatID(context.Background(), companyID)
 		if ownerID != 0 {
 			for _, item := range lowStockItems {
-				h.tgBot.SendLowStockAlert(ownerID, item.Name, int(item.Stock))
+				h.tgBot.SendLowStockAlert(ownerID, item.Name, item.Stock, item.Unit)
 			}
 		}
 	}()

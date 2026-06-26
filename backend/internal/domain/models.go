@@ -72,7 +72,7 @@ type ProductImportError struct {
 type SaleItem struct {
 	SaleID      int     `json:"sale_id"`
 	ProductID   int     `json:"product_id"`
-	Quantity    int     `json:"quantity"`
+	Quantity    float64 `json:"quantity"`
 	PriceAtSale float64 `json:"price"`
 }
 

@@ -181,6 +181,7 @@ func (r *UserRepository) GetOwnerChatID(ctx context.Context, companyID int) (int
 	err := r.db.QueryRow(ctx, query, companyID).Scan(&chatID)
 	return chatID, err
 }
+
 // GetByChatID — ИСПРАВЛЕНО: раньше company_id не выбирался, из-за чего
 // у бота user.CompanyID всегда был 0 — все аналитические запросы из бота
 // уходили "в компанию 0" (и из-за отсутствия фильтрации раньше это не было

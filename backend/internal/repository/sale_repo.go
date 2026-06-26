@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"log"
 	"retail-managment-system/internal/domain"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -82,17 +83,18 @@ func (r *SaleRepository) GetTodayTotal(ctx context.Context, companyID int) (doma
 
 func (r *SaleRepository) GetTopProducts(ctx context.Context, companyID int, limit int) (string, error) {
 	query := `
-        SELECT p.name, SUM(si.quantity) as total_qty
+        SELECT p.name, SUM(si.quantity) as total_qty, p.unit
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
         WHERE s.company_id = $1
-        GROUP BY p.name
+        GROUP BY p.name, p.unit
         ORDER BY total_qty DESC
         LIMIT $2`
 
 	rows, err := r.db.Query(ctx, query, companyID, limit)
 	if err != nil {
+		log.Println(err)
 		return "", err
 	}
 	defer rows.Close()
@@ -100,11 +102,18 @@ func (r *SaleRepository) GetTopProducts(ctx context.Context, companyID int, limi
 	report := "🔝 **Маҳсулотҳои бисер харида шуда!**\n"
 	for rows.Next() {
 		var name string
-		var qty int
-		if err := rows.Scan(&name, &qty); err != nil {
+		var unit string
+		var qty float64
+
+		if err := rows.Scan(&name, &qty, &unit); err != nil {
 			continue
 		}
-		report += fmt.Sprintf("- %s: %d дона.\n", name, qty)
+		if unit == "kg" {
+			unit = "кг"
+		} else {
+			unit = "дона"
+		}
+		report += fmt.Sprintf("- %s: %g %s\n", name, qty, unit)
 	}
 	return report, nil
 }

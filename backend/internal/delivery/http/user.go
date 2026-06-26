@@ -276,6 +276,7 @@ func (h *Handler) generateTgLinkToken(c *gin.Context) {
 func (h *Handler) unlinkTelegram(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	if err := h.userRepo.InvalidateTgLink(context.Background(), userID.(int)); err != nil {
+		log.Println(err)
 		c.JSON(500, gin.H{"error": "Ошибка"})
 		return
 	}
