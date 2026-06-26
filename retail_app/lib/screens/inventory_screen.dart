@@ -108,7 +108,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                   ),
                 ),
                 Text(
-                  'Текущий остаток: ${product.stock} ${product.unitLabel}.',
+                  'Миқдори ҳозира: ${product.stock} ${product.unitLabel}.',
                   style: const TextStyle(color: Colors.grey),
                 ),
                 const SizedBox(height: 20),
@@ -118,7 +118,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                     decimal: true,
                   ),
                   decoration: InputDecoration(
-                    labelText: 'Добавить количество (${product.unitLabel})',
+                    labelText: 'Илова кардан (${product.unitLabel})',
                     prefixIcon: Icon(Icons.add_box),
                     border: OutlineInputBorder(),
                   ),
@@ -131,7 +131,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                         controller: buyCtrl,
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(
-                          labelText: 'Цена закупа',
+                          labelText: 'Нархи харид',
                           border: OutlineInputBorder(),
                         ),
                       ),
@@ -142,7 +142,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                         controller: sellCtrl,
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(
-                          labelText: 'Цена продажи',
+                          labelText: 'Нархи фурӯш',
                           border: OutlineInputBorder(),
                         ),
                       ),
@@ -155,8 +155,9 @@ class _InventoryScreenState extends State<InventoryScreen>
                     controller: reasonCtrl,
                     maxLines: 2,
                     decoration: InputDecoration(
-                      labelText: 'Причина изменения склада',
-                      hintText: 'Например: пересчёт, новая поставка...',
+                      labelText: 'Сабаби тағиребии анбор',
+                      hintText:
+                          'Мисол: илова кардани маҳсулот, дигар сабабҳо...',
                       prefixIcon: const Icon(Icons.edit_note),
                       border: const OutlineInputBorder(),
                       errorText: reasonError,
@@ -164,7 +165,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Владелец получит уведомление об этом изменении',
+                    'Соҳибкор аз тағирот огоҳӣ мейобад.',
                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                   ),
                 ],
@@ -182,7 +183,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                     onPressed: () async {
                       if (isSeller && reasonCtrl.text.trim().isEmpty) {
                         setSheetState(
-                          () => reasonError = 'Укажите причину изменения',
+                          () => reasonError = 'Сабаби тағиротро нависед.',
                         );
                         return;
                       }
@@ -210,8 +211,8 @@ class _InventoryScreenState extends State<InventoryScreen>
                           SnackBar(
                             content: Text(
                               isSeller
-                                  ? 'Склад обновлён! Владелец уведомлён.'
-                                  : 'Склад обновлён!',
+                                  ? 'Анбор тағир ёфт! Соҳибкор огоҳ карда шудааст.'
+                                  : 'Анбор тағир ёфт!',
                             ),
                             backgroundColor: Colors.green,
                           ),
@@ -219,14 +220,14 @@ class _InventoryScreenState extends State<InventoryScreen>
                       } else if (!ok && mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('Не удалось обновить склад'),
+                            content: Text('Тағири анбор муяссар нашуд.'),
                             backgroundColor: Colors.red,
                           ),
                         );
                       }
                     },
                     child: const Text(
-                      'Сохранить',
+                      'Насб',
                       style: TextStyle(color: Colors.white, fontSize: 16),
                     ),
                   ),
@@ -270,7 +271,7 @@ class _InventoryScreenState extends State<InventoryScreen>
             child: TextField(
               controller: _searchCtrl,
               decoration: InputDecoration(
-                hintText: 'Поиск по названию или штрихкоду...',
+                hintText: 'Ҷустуҷӯ аз рӯи ном ё штрих-код...',
                 prefixIcon: const Icon(Icons.search, color: Colors.grey),
                 suffixIcon: _searchCtrl.text.isNotEmpty
                     ? IconButton(
@@ -298,7 +299,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                 : RefreshIndicator(
                     onRefresh: _loadProducts,
                     child: _filtered.isEmpty
-                        ? const Center(child: Text('Ничего не найдено'))
+                        ? const Center(child: Text('Ягон чиз ёфт нашуд'))
                         : ListView.separated(
                             padding: const EdgeInsets.all(16),
                             itemCount: _filtered.length,
@@ -341,7 +342,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        'Закуп: ${p.buyPrice.toStringAsFixed(2)} | Продажа: ${p.sellPrice.toStringAsFixed(2)} | Маржа: $margin%',
+                                        'Харид: ${p.buyPrice.toStringAsFixed(2)} | Фурӯш: ${p.sellPrice.toStringAsFixed(2)} | Маржа: $margin%',
                                         style: const TextStyle(
                                           fontSize: 12,
                                           color: Colors.grey,

@@ -38,20 +38,23 @@ class _AddProductScreenState extends State<AddProductScreen> {
 
     if (success) {
       Navigator.pop(context); // Возвращаемся назад
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Товар успешно добавлен!')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Маҳсулот бо муваффақият илова карда шуд!'),
+          backgroundColor: Colors.green,
+        ),
+      );
     } else {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Ошибка при сохранении')));
+      ).showSnackBar(const SnackBar(content: Text('Хатогӣ ҳангоми насб')));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Новый товар')),
+      appBar: AppBar(title: const Text('Маҳсулот нав')),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Form(
@@ -60,8 +63,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
             children: [
               TextFormField(
                 controller: _nameController,
-                decoration: const InputDecoration(labelText: 'Название товара'),
-                validator: (v) => v!.isEmpty ? 'Введите название' : null,
+                decoration: const InputDecoration(labelText: 'Номи маҳсулот'),
+                validator: (v) => v!.isEmpty ? 'Номро нависед' : null,
               ),
               TextFormField(
                 controller: _barcodeController,
@@ -86,7 +89,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
                   ),
                 ),
                 validator: (v) =>
-                    v!.isEmpty ? 'Сканируйте или введите код' : null,
+                    v!.isEmpty ? 'Скан кунед ё кодро дохил кунед' : null,
               ),
               const SizedBox(height: 10),
               Row(
@@ -95,7 +98,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
                     child: TextFormField(
                       controller: _buyPriceController,
                       decoration: const InputDecoration(
-                        labelText: 'Цена закупа',
+                        labelText: 'Нархи харид',
                       ),
                       keyboardType: TextInputType.number,
                       validator: (v) => v!.isEmpty ? '?' : null,
@@ -106,7 +109,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
                     child: TextFormField(
                       controller: _sellPriceController,
                       decoration: const InputDecoration(
-                        labelText: 'Цена продажи',
+                        labelText: 'Нархи фурӯш',
                       ),
                       keyboardType: TextInputType.number,
                       validator: (v) => v!.isEmpty ? '?' : null,
@@ -123,18 +126,20 @@ class _AddProductScreenState extends State<AddProductScreen> {
                     child: TextFormField(
                       controller: _stockController,
                       decoration: InputDecoration(
-                        labelText: 'Количество на складе',
+                        labelText: 'Миқдор',
                         helperText: _unit == 'kg'
-                            ? 'Можно указать дробное значение, напр. 2.5'
+                            ? 'Шумо метавонед адади касри дохил кунед, масалан 2.5'
                             : null,
                       ),
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
                       validator: (v) {
-                        if (v == null || v.isEmpty) return 'Введите остаток';
+                        print(v);
+                        if (v == null || v.isEmpty)
+                          return 'Бақияро ворид кунед';
                         final parsed = double.tryParse(v.replaceAll(',', '.'));
-                        if (parsed == null) return 'Неверное число';
+                        if (parsed == null) return 'Рақами нодуруст';
                         return null;
                       },
                     ),
@@ -144,9 +149,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
                     flex: 1,
                     child: DropdownButtonFormField<String>(
                       value: _unit,
-                      decoration: const InputDecoration(labelText: 'Единица'),
+                      decoration: const InputDecoration(labelText: 'Воҳид'),
                       items: const [
-                        DropdownMenuItem(value: 'pcs', child: Text('шт')),
+                        DropdownMenuItem(value: 'pcs', child: Text('дона')),
                         DropdownMenuItem(value: 'kg', child: Text('кг')),
                       ],
                       onChanged: (v) {
@@ -164,7 +169,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
                   backgroundColor: Colors.blue,
                 ),
                 child: const Text(
-                  'СОХРАНИТЬ',
+                  'Насб',
                   style: TextStyle(color: Colors.white),
                 ),
               ),

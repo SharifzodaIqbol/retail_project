@@ -91,14 +91,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (product != null) {
       if (mounted) {
-        Provider.of<CartProvider>(context, listen: false).addProduct(product);
-        _requestScannerFocus(); // Держим фокус после добавления товара
+        if (product.unit == 'kg') {
+          _promptWeightAndAdd(product);
+        } else {
+          Provider.of<CartProvider>(context, listen: false).addProduct(product);
+          _requestScannerFocus(); // Держим фокус после добавления товара
+        }
       }
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Товар не найден'),
+            content: Text('Маҳсулот ёфт нашуд'),
             backgroundColor: Colors.red,
             duration: Duration(seconds: 1),
           ),
@@ -133,10 +137,12 @@ class _HomeScreenState extends State<HomeScreen> {
     if (RegExp(r'^\d+$').hasMatch(text)) {
       _processScannedBarcode(text);
     } else if (_suggestions.isNotEmpty) {
-      Provider.of<CartProvider>(
-        context,
-        listen: false,
-      ).addProduct(_suggestions.first);
+      final found = _suggestions.first;
+      if (found.unit == 'kg') {
+        _promptWeightAndAdd(found);
+      } else {
+        Provider.of<CartProvider>(context, listen: false).addProduct(found);
+      }
     }
 
     _searchController.clear();
@@ -154,23 +160,19 @@ class _HomeScreenState extends State<HomeScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Подтвердить оплату?'),
+        title: const Text('Тасдиқи пардохт?'),
         content: Text(
-          'Итого: ${cart.totalAmount.toStringAsFixed(2)} сомони\n'
-          '${cart.items.length} позиций',
+          'Дар маҷмӯъ: ${cart.totalAmount.toStringAsFixed(2)} сомонӣ\n',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              'Оплатить',
-              style: TextStyle(color: Colors.white),
-            ),
+            child: const Text('Пардохт', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -208,7 +210,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Нет сети! Чек сохранён в памяти телефона'),
+            content: Text('Шабака нест! Чек дар хотираи телефон сабт шуд'),
             backgroundColor: Colors.orange,
           ),
         );
@@ -217,7 +219,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('✅ Продажа оформлена!'),
+            content: Text('✅ Фурӯш ба расмият дароварда шуд!'),
             backgroundColor: Colors.green,
           ),
         );
@@ -226,39 +228,92 @@ class _HomeScreenState extends State<HomeScreen> {
     cart.clearCart();
   }
 
-  void _showQuantityDialog(
-    BuildContext context,
-    CartProvider cart,
-    dynamic item,
-  ) {
-    final controller = TextEditingController(text: item.quantity.toString());
+  /// Запрашивает у продавца вес товара вручную (для unit == 'kg').
+  /// Введённый вес добавляется к товару в корзине (если товар уже есть —
+  /// суммируется с текущим количеством).
+  void _promptWeightAndAdd(Product product) {
+    final controller = TextEditingController();
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Количество: ${item.product.name}'),
+        title: Text('Вазн: ${product.name}'),
         content: TextField(
           controller: controller,
           autofocus: true,
-          keyboardType: TextInputType.number,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
           decoration: const InputDecoration(
-            labelText: 'Количество',
+            labelText: 'Вазнро ворид кунед, кг (масалан 0.5)',
             border: OutlineInputBorder(),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton(
             onPressed: () {
-              final newQty = int.tryParse(controller.text);
+              final weight = double.tryParse(
+                controller.text.replaceAll(',', '.'),
+              );
+              if (weight != null && weight > 0) {
+                Provider.of<CartProvider>(
+                  context,
+                  listen: false,
+                ).addWeighedAmount(product, weight);
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Вазнро дуруст ворид кунед.')),
+                );
+                return;
+              }
+              Navigator.pop(context);
+            },
+            child: const Text('Илова кардан'),
+          ),
+        ],
+      ),
+    ).then((_) {
+      _requestScannerFocus();
+    });
+  }
+
+  void _showQuantityDialog(
+    BuildContext context,
+    CartProvider cart,
+    dynamic item,
+  ) {
+    final controller = TextEditingController(text: item.quantity.toString());
+    final isKg = item.product.unit == 'kg';
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Маҳсулот: ${item.product.name}'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+            labelText: isKg ? 'Миқдор (кг), масалан. 0.5' : 'Миқдор (дона)',
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Бекор кардан'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final newQty = double.tryParse(
+                controller.text.replaceAll(',', '.'),
+              );
               if (newQty != null) {
                 cart.updateQuantity(item.product.id, newQty);
               }
               Navigator.pop(context);
             },
-            child: const Text('Готово'),
+            child: const Text('Тайер'),
           ),
         ],
       ),
@@ -290,7 +345,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (successCount > 0 && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('☁️ Синхронизировано чеков: $successCount'),
+          content: Text('☁️ Квитансияҳо ҳамоҳанг карда шудаанд: $successCount'),
           backgroundColor: Colors.blue,
         ),
       );
@@ -336,7 +391,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (_username.isNotEmpty)
                   Text(
                     _username,
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      color: Color.fromARGB(255, 130, 138, 101),
+                    ),
                   ),
               ],
             ),
@@ -346,7 +404,7 @@ class _HomeScreenState extends State<HomeScreen> {
             actions: [
               IconButton(
                 icon: const Icon(Icons.add_box_outlined),
-                tooltip: 'Добавить товар',
+                tooltip: 'Маҳсулотро илова кардан',
                 onPressed: () {
                   Navigator.push(
                     context,
@@ -362,7 +420,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Icons.delete_sweep_outlined,
                     color: Colors.red,
                   ),
-                  tooltip: 'Очистить',
+                  tooltip: 'Тоза кардан',
                   onPressed: () {
                     cart.clearCart();
                     _requestScannerFocus();
@@ -371,7 +429,7 @@ class _HomeScreenState extends State<HomeScreen> {
               if (_role == 'owner')
                 IconButton(
                   icon: const Icon(Icons.logout),
-                  tooltip: 'Выход',
+                  tooltip: 'Баромад',
                   onPressed: _logout,
                 ),
               if (_role == 'seller' && widget.onSellerLogout != null)
@@ -379,7 +437,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: widget.onSellerLogout,
                   icon: const Icon(Icons.logout, size: 18, color: Colors.red),
                   label: const Text(
-                    'Выйти',
+                    'Баромад',
                     style: TextStyle(color: Colors.red),
                   ),
                 ),
@@ -396,7 +454,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       controller: _searchController,
                       textInputAction: TextInputAction.search,
                       decoration: InputDecoration(
-                        hintText: 'Поиск товара по названию...',
+                        hintText: 'Ҷустуҷӯи маҳсулот аз рӯи ном...',
                         prefixIcon: IconButton(
                           icon: const Icon(
                             Icons.qr_code_scanner,
@@ -452,7 +510,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             return ListTile(
                               title: Text(p.name),
                               subtitle: Text(
-                                '${p.sellPrice.toStringAsFixed(2)} сом. • ${p.stock} шт.',
+                                '${p.sellPrice.toStringAsFixed(2)} сомонӣ. ${p.stock} ${p.unitLabel}.',
                                 style: const TextStyle(fontSize: 12),
                               ),
                               leading: Container(
@@ -471,12 +529,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                               ),
                               onTap: () {
-                                cart.addProduct(p);
                                 setState(() {
                                   _suggestions = [];
                                   _searchController.clear();
                                 });
-                                _requestScannerFocus(); // Возвращаем фокус после клика по списку
+                                if (p.unit == 'kg') {
+                                  _promptWeightAndAdd(p);
+                                } else {
+                                  cart.addProduct(p);
+                                  _requestScannerFocus(); // Возвращаем фокус после клика по списку
+                                }
                               },
                             );
                           },
@@ -498,7 +560,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             const SizedBox(height: 16),
                             Text(
-                              'Корзина пуста',
+                              'Сабад холӣ аст',
                               style: TextStyle(
                                 color: Colors.grey[400],
                                 fontSize: 18,
@@ -506,7 +568,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Сканируйте штрихкод в любой момент',
+                              'Штрих-кодро дар вақти дилхоҳ скан кунед.',
                               style: TextStyle(
                                 color: Colors.grey[400],
                                 fontSize: 13,
@@ -571,7 +633,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                             ),
                                           ),
                                           Text(
-                                            '${item.product.sellPrice.toStringAsFixed(2)} сом.',
+                                            '${item.product.sellPrice.toStringAsFixed(2)} сомонӣ',
                                             style: const TextStyle(
                                               color: Colors.grey,
                                               fontSize: 13,
@@ -588,7 +650,18 @@ class _HomeScreenState extends State<HomeScreen> {
                                             color: Colors.red,
                                           ),
                                           onPressed: () {
-                                            cart.removeOneItem(item.product.id);
+                                            if (item.product.unit == 'kg') {
+                                              // Для весовых товаров нет
+                                              // фиксированного шага — убираем строку целиком,
+                                              // точный вес правится тапом по количеству.
+                                              cart.deleteProduct(
+                                                item.product.id,
+                                              );
+                                            } else {
+                                              cart.removeOneItem(
+                                                item.product.id,
+                                              );
+                                            }
                                             _requestScannerFocus();
                                           },
                                         ),
@@ -611,7 +684,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                                   BorderRadius.circular(8),
                                             ),
                                             child: Text(
-                                              '${item.quantity}',
+                                              item.product.unit == 'kg'
+                                                  ? '${item.quantity.toStringAsFixed(item.quantity.truncateToDouble() == item.quantity ? 0 : 2)} кг'
+                                                  : '${item.quantity.toStringAsFixed(0)}',
                                               style: const TextStyle(
                                                 fontWeight: FontWeight.w700,
                                                 color: Color(0xFF4F6EF7),
@@ -626,8 +701,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                             color: Color(0xFF27AE60),
                                           ),
                                           onPressed: () {
-                                            cart.addProduct(item.product);
-                                            _requestScannerFocus();
+                                            if (item.product.unit == 'kg') {
+                                              // Просим продавца ввести вес вручную,
+                                              // а не молча прибавляем фиксированный шаг.
+                                              _promptWeightAndAdd(item.product);
+                                            } else {
+                                              cart.addProduct(item.product);
+                                              _requestScannerFocus();
+                                            }
                                           },
                                         ),
                                       ],
@@ -671,7 +752,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         const Text(
-                          'ИТОГО',
+                          'ДАР МАҶМӮЪ',
                           style: TextStyle(
                             color: Colors.grey,
                             fontSize: 12,
@@ -680,18 +761,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         Text(
-                          '${cart.totalAmount.toStringAsFixed(2)} сом.',
+                          '${cart.totalAmount.toStringAsFixed(2)} сомонӣ',
                           style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.w800,
                             color: Color(0xFF1A1A2E),
-                          ),
-                        ),
-                        Text(
-                          '${cart.items.length} позиций',
-                          style: TextStyle(
-                            color: Colors.grey[500],
-                            fontSize: 12,
                           ),
                         ),
                       ],
@@ -711,7 +785,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         child: const Text(
-                          'ОПЛАТИТЬ',
+                          'ПАРДОХТ',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 16,

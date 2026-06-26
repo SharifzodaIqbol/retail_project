@@ -59,17 +59,17 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Привязать Telegram'),
+        title: const Text('Пайванди Telegram'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Нажмите кнопку ниже, чтобы открыть Telegram и привязать аккаунт автоматически.',
+              'Барои кушодани Telegram ва ба таври худкор пайваст кардани ҳисоб тугмаи зерро пахш кунед.',
             ),
             const SizedBox(height: 8),
             const Text(
-              'Ссылка действительна 10 минут.',
+              'Пайванд 10 дақиқа эътибор дорад.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 16),
@@ -98,7 +98,9 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: deeplink));
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Ссылка скопирована')),
+                        const SnackBar(
+                          content: Text('Пайванд нусхабардорӣ карда шуд'),
+                        ),
                       );
                     },
                   ),
@@ -110,12 +112,12 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton.icon(
             icon: const Icon(Icons.telegram, color: Colors.white),
             label: const Text(
-              'Открыть Telegram',
+              'Telegram-ро кушоед',
               style: TextStyle(color: Colors.white),
             ),
             style: ElevatedButton.styleFrom(
@@ -141,20 +143,19 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Отвязать Telegram?'),
-        content: const Text('Уведомления о продажах перестанут приходить.'),
+        title: const Text('Аз пайвасти Telegram бот мебароед?'),
+        content: const Text(
+          'Огоҳиномаҳо дар бораи фурӯш омаданро қатъ мекунед.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text(
-              'Отвязать',
-              style: TextStyle(color: Colors.white),
-            ),
+            child: const Text('Тасдиқ', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -172,12 +173,12 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text('PIN для ${user['username']}'),
+        title: Text('PIN барои ${user['username']}'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-              '4-значный PIN для входа в терминальном режиме',
+              'PIN 4-рақам барои воридшавӣ ба ҳолати терминал',
               style: TextStyle(color: Colors.grey, fontSize: 13),
             ),
             const SizedBox(height: 12),
@@ -188,7 +189,7 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
               obscureText: true,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               decoration: const InputDecoration(
-                labelText: 'PIN-код (4 цифры)',
+                labelText: 'PIN-код (4 рақам)',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -197,7 +198,7 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -212,23 +213,20 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                 _load();
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('PIN установлен'),
+                    content: Text('PIN насб карда шудааст'),
                     backgroundColor: Colors.green,
                   ),
                 );
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Ошибка'),
+                    content: Text('Хатоги шуд'),
                     backgroundColor: Colors.red,
                   ),
                 );
               }
             },
-            child: const Text(
-              'Сохранить',
-              style: TextStyle(color: Colors.white),
-            ),
+            child: const Text('Насб', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -242,7 +240,7 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
     if (sellers.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Сначала установите PIN хотя бы одному сотруднику'),
+          content: Text('Аввалан, ками-кам барои як корманд PIN-код гузоред.'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -252,21 +250,24 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Режим терминала'),
+        title: const Text('Ҳолати терминал'),
         content: const Text(
-          'Приложение перейдёт в режим кассы.\nСотрудники смогут входить по PIN.\nДля выхода удержите кнопку и введите ваш пароль.',
+          'Барнома ба ҳолати касса мегузарад.\nКормандон метавонанд ба PIN ворид шаванд.\nБарои баромадан тугмаро нигоҳ дошта истед ва пароли худро ворид кунед.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF4F6EF7),
             ),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Перейти', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Гузаштан',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -289,21 +290,21 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Новый продавец'),
+          title: const Text('Фурӯшандаи нав'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Продавцы входят только через PIN — пароль не нужен.',
+                  'Фурӯшандагон танҳо тавассути PIN ворид мешаванд парол лозим нест.',
                   style: TextStyle(color: Colors.grey, fontSize: 12),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: usernameCtrl,
                   decoration: const InputDecoration(
-                    labelText: 'Имя продавца',
+                    labelText: 'Номи фурӯшанда',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -315,9 +316,10 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                   obscureText: true,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: const InputDecoration(
-                    labelText: 'PIN-код (4 цифры)',
+                    labelText: 'PIN-код (4 рақам)',
                     border: OutlineInputBorder(),
-                    helperText: 'Продавец введёт это при входе',
+                    helperText:
+                        'Фурӯшанда инро ҳангоми ворид шудан ворид мекунад',
                   ),
                 ),
               ],
@@ -326,7 +328,7 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Отмена'),
+              child: const Text('Бекор кардан'),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
@@ -336,7 +338,7 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                 if (usernameCtrl.text.isEmpty) return;
                 if (pinCtrl.text.length != 4) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('PIN должен быть 4 цифры')),
+                    const SnackBar(content: Text('PIN бояд 4 рақам бошад')),
                   );
                   return;
                 }
@@ -353,23 +355,20 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                   _load();
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Продавец добавлен!'),
+                      content: Text('Фурӯшанда илова карда шуд!'),
                       backgroundColor: Colors.green,
                     ),
                   );
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Ошибка. Имя уже занято?'),
+                      content: Text('Хато. Ин ном аллакай ҳаст?'),
                       backgroundColor: Colors.red,
                     ),
                   );
                 }
               },
-              child: const Text(
-                'Создать',
-                style: TextStyle(color: Colors.white),
-              ),
+              child: const Text('Насб', style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
@@ -381,17 +380,17 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Удалить сотрудника?'),
-        content: Text('Пользователь "$username" будет удалён.'),
+        title: const Text('Корманд хориҷ карда шавад?'),
+        content: Text('Фурӯшанда "$username" хориҷ карда мешавад.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Удалить', style: TextStyle(color: Colors.white)),
+            child: const Text('Хориҷ', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -408,7 +407,7 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
         title: const Text(
-          'Панель владельца',
+          'Панели соҳиб',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
         backgroundColor: Colors.white,
@@ -426,13 +425,13 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                 padding: const EdgeInsets.all(16),
                 children: [
                   // ─── Секция: Магазины ──────────────────────────────────
-                  _SectionHeader(title: 'Мои магазины'),
+                  _SectionHeader(title: 'Мағозаҳои ман'),
                   const SizedBox(height: 8),
                   _ActionCard(
                     icon: Icons.store,
                     iconColor: const Color(0xFF22C55E),
-                    title: 'Управление магазинами',
-                    subtitle: 'Добавляйте и переключайтесь между магазинами',
+                    title: 'Идоракунии мағозаҳо',
+                    subtitle: 'Илова кунед мағозаро ва ба дилхоҳ мағоза дароед',
                     onTap: () {
                       Navigator.push(
                         context,
@@ -449,13 +448,14 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                   const SizedBox(height: 24),
 
                   // ─── Секция: Товары ────────────────────────────────────
-                  _SectionHeader(title: 'Товары'),
+                  _SectionHeader(title: 'Маҳсулотҳо'),
                   const SizedBox(height: 8),
                   _ActionCard(
                     icon: Icons.upload_file,
                     iconColor: const Color(0xFFF59E0B),
-                    title: 'Загрузить товары из Excel',
-                    subtitle: 'Массовое добавление и обновление по штрихкоду',
+                    title: 'Даровардани маҳсулотҳо аз Excel',
+                    subtitle:
+                        'Бисёр маҳсулотҳоро даровардан ва азнавсозии маҳсулот агар штрихкод такрор шавад',
                     onTap: () {
                       Navigator.push(
                         context,
@@ -474,13 +474,13 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                   const SizedBox(height: 24),
 
                   // ─── Секция: Режим терминала ───────────────────────────
-                  _SectionHeader(title: 'Терминальный режим'),
+                  _SectionHeader(title: 'Ҳолати терминал'),
                   const SizedBox(height: 8),
                   _ActionCard(
                     icon: Icons.point_of_sale,
                     iconColor: const Color(0xFF4F6EF7),
-                    title: 'Перевести в кассовый режим',
-                    subtitle: 'Сотрудники входят по PIN-коду',
+                    title: 'Ба ҳолати кассавӣ гузаштан',
+                    subtitle: 'Кормандон тавассути PIN-код ворид мешаванд',
                     onTap: _enterTerminalMode,
                     trailing: const Icon(
                       Icons.arrow_forward_ios,
@@ -492,17 +492,17 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                   const SizedBox(height: 24),
 
                   // ─── Секция: Telegram ──────────────────────────────────
-                  _SectionHeader(title: 'Telegram уведомления'),
+                  _SectionHeader(title: 'Огоҳиҳои аз Telegram-бот'),
                   const SizedBox(height: 8),
                   _ActionCard(
                     icon: Icons.telegram,
                     iconColor: const Color(0xFF0088CC),
                     title: _tgLinked
-                        ? 'Telegram привязан'
-                        : 'Привязать Telegram',
+                        ? 'Telegram пайваст карда шудааст'
+                        : 'Пайвастшавӣ ба Telegram',
                     subtitle: _tgLinked
-                        ? 'Вы получаете уведомления о продажах'
-                        : 'Получайте уведомления о продажах',
+                        ? 'Ба шумо огоҳиномаҳои фурӯш равно карда мешавад'
+                        : 'Огоҳиномаҳои фурӯшро қабул кунед',
                     onTap: _tgLinked ? _unlinkTelegram : _linkTelegram,
                     trailing: _tgLinked
                         ? const Icon(
@@ -524,11 +524,11 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      _SectionHeader(title: 'Сотрудники'),
+                      _SectionHeader(title: 'Коргарҳо'),
                       TextButton.icon(
                         onPressed: _showAddUserDialog,
                         icon: const Icon(Icons.person_add, size: 16),
-                        label: const Text('Добавить'),
+                        label: const Text('Илова'),
                       ),
                     ],
                   ),
@@ -692,7 +692,7 @@ class _UserTile extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      isOwner ? 'Владелец' : 'Продавец',
+                      isOwner ? 'Соҳибкор' : 'Фурӯшанда',
                       style: TextStyle(
                         color: isOwner ? const Color(0xFFFFD700) : Colors.grey,
                         fontSize: 12,
@@ -733,7 +733,7 @@ class _UserTile extends StatelessWidget {
               color: hasPin ? Colors.green : Colors.grey,
               size: 22,
             ),
-            tooltip: hasPin ? 'Изменить PIN' : 'Установить PIN',
+            tooltip: hasPin ? 'Тағйир додани PIN' : 'Насб кардани PIN',
             onPressed: onSetPin,
           ),
           if (onDelete != null)

@@ -102,7 +102,10 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
                 const _ColumnRow(letter: 'B', label: 'Штрихкод'),
                 const _ColumnRow(letter: 'C', label: 'Цена закупки'),
                 const _ColumnRow(letter: 'D', label: 'Цена продажи'),
-                const _ColumnRow(letter: 'E', label: 'Остаток (для кг — можно дробный, напр. 2.5)'),
+                const _ColumnRow(
+                  letter: 'E',
+                  label: 'Остаток (для кг — можно дробный, напр. 2.5)',
+                ),
                 const _ColumnRow(letter: 'F', label: "Единица: 'шт' или 'кг'"),
                 const SizedBox(height: 8),
                 Text(
@@ -156,7 +159,10 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
                   const Icon(Icons.error_outline, color: Colors.red),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(_error!, style: const TextStyle(color: Colors.red)),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
                   ),
                 ],
               ),

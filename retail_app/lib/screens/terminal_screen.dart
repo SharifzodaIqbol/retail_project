@@ -1,19 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
+import '../services/connectivity_service.dart';
 import '../widgets/rate_limit_banner.dart';
+
+bool isRateLimited(int? seconds) => seconds != null && seconds > 0;
 
 /// Экран терминального режима.
 /// Показывается когда terminal_mode=true и пользователь не залогинен.
-/// Продавцы входят по PIN. Хозяин может вернуться в свою учётку через долгое нажатие.
+/// Продавцы входят по PIN. Хозяин может вернуться через долгое нажатие.
+/// Офлайн: список продавцов и проверка PIN берутся из SQLite-кэша.
 class TerminalScreen extends StatefulWidget {
   final int companyId;
   final String companyName;
-
-  /// Продавец успешно вошёл по PIN
   final void Function(String token, String role, String username) onSellerLogin;
-
-  /// Хозяин вышел из терминального режима (уже авторизован)
   final VoidCallback onOwnerExitTerminal;
 
   const TerminalScreen({
@@ -32,18 +32,26 @@ class _TerminalScreenState extends State<TerminalScreen> {
   final _api = ApiService();
   List<dynamic> _users = [];
   bool _loading = true;
+  bool _isOnline = true;
+  bool _fromCache = false;
 
   @override
   void initState() {
     super.initState();
+    _isOnline = ConnectivityService.instance.isOnline;
     _loadUsers();
   }
 
   Future<void> _loadUsers() async {
     setState(() => _loading = true);
     final users = await _api.getTerminalUsers(widget.companyId);
+
+    // Если сеть недоступна — getTerminalUsers вернёт кэш
+    final online = ConnectivityService.instance.isOnline;
     setState(() {
-      _users = users; // бэкенд уже фильтрует только seller'ов с PIN
+      _users = users;
+      _isOnline = online;
+      _fromCache = !online;
       _loading = false;
     });
   }
@@ -59,22 +67,20 @@ class _TerminalScreenState extends State<TerminalScreen> {
         companyId: widget.companyId,
         onSuccess: (token, role, username) async {
           if (!mounted) return;
-          Navigator.of(context).pop(); // закрыть sheet
+          Navigator.of(context).pop();
           widget.onSellerLogin(token, role, username);
         },
       ),
     );
   }
 
-  /// Хозяин хочет вернуться в свой аккаунт — вводит логин/пароль
   Future<void> _exitToOwner() async {
     final result = await showDialog<Map<String, dynamic>?>(
       context: context,
-      builder: (ctx) => _OwnerPasswordDialog(),
+      builder: (ctx) => const _OwnerPasswordDialog(),
     );
 
     if (result != null) {
-      // Сохраняем данные owner'а и выходим из терминала
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('jwt_token', result['token']);
       await prefs.setString('user_role', result['role']);
@@ -119,7 +125,6 @@ class _TerminalScreenState extends State<TerminalScreen> {
                       ),
                     ],
                   ),
-                  // Кнопка выхода для хозяина (долгое нажатие)
                   GestureDetector(
                     onLongPress: _exitToOwner,
                     child: Container(
@@ -154,6 +159,38 @@ class _TerminalScreenState extends State<TerminalScreen> {
               ),
             ),
 
+            // Баннер офлайн-режима
+            if (!_isOnline || _fromCache)
+              Container(
+                margin: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.orange.withOpacity(0.4)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.cloud_off, color: Colors.orange, size: 18),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _fromCache
+                            ? 'Офлайн-режим — показаны сохранённые данные.\nPIN-проверка работает по кэшу.'
+                            : 'Нет подключения к сети',
+                        style: const TextStyle(
+                          color: Colors.orange,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
             const SizedBox(height: 40),
 
             const Text(
@@ -169,10 +206,8 @@ class _TerminalScreenState extends State<TerminalScreen> {
               'Затем введите PIN-код',
               style: TextStyle(color: Colors.white54, fontSize: 14),
             ),
-
             const SizedBox(height: 32),
 
-            // Список продавцов
             Expanded(
               child: _loading
                   ? const Center(
@@ -288,7 +323,9 @@ class _UserCard extends StatelessWidget {
   }
 }
 
-/// Нижний лист с PIN-клавиатурой
+/// Нижний лист с PIN-клавиатурой.
+/// Онлайн: проверяет PIN на сервере + сохраняет хэш.
+/// Офлайн: проверяет по сохранённому хэшу в SQLite.
 class _PinInputSheet extends StatefulWidget {
   final String userName;
   final int userId;
@@ -311,11 +348,9 @@ class _PinInputSheetState extends State<_PinInputSheet> {
   String _pin = '';
   bool _loading = false;
   String? _error;
-
-  // Заполняется при 429 от backend — баннер с обратным отсчётом и
-  // блокировка клавиатуры до истечения этого времени.
   int? _rateLimitSeconds;
   String _rateLimitMessage = '';
+  bool _isOfflineLogin = false;
 
   void _onKey(String digit) {
     if (isRateLimited(_rateLimitSeconds)) return;
@@ -334,12 +369,29 @@ class _PinInputSheetState extends State<_PinInputSheet> {
   }
 
   Future<void> _submit() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _isOfflineLogin = false;
+    });
     try {
       final result = await _api.pinLogin(widget.userId, widget.companyId, _pin);
       if (!mounted) return;
       if (result != null) {
-        widget.onSuccess(result['token'], result['role'], result['username']);
+        // Проверяем, был ли вход офлайн (из кэша)
+        if (result['offline'] == true) {
+          setState(() {
+            _isOfflineLogin = true;
+            _loading = false;
+          });
+          // Небольшая задержка чтобы пользователь увидел метку "Офлайн"
+          await Future.delayed(const Duration(milliseconds: 600));
+          if (!mounted) return;
+        }
+        widget.onSuccess(
+          result['token'] ?? '',
+          result['role'] ?? 'seller',
+          result['username'] ?? widget.userName,
+        );
       } else {
         setState(() {
           _error = 'Неверный PIN';
@@ -389,9 +441,33 @@ class _PinInputSheetState extends State<_PinInputSheet> {
             ),
           ),
           const SizedBox(height: 4),
-          const Text(
-            'Введите PIN-код',
-            style: TextStyle(color: Colors.white54, fontSize: 14),
+
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text(
+                'Введите PIN-код',
+                style: TextStyle(color: Colors.white54, fontSize: 14),
+              ),
+              if (!ConnectivityService.instance.isOnline) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.orange.withOpacity(0.5)),
+                  ),
+                  child: const Text(
+                    'офлайн',
+                    style: TextStyle(color: Colors.orange, fontSize: 11),
+                  ),
+                ),
+              ],
+            ],
           ),
 
           const SizedBox(height: 24),
@@ -407,7 +483,9 @@ class _PinInputSheetState extends State<_PinInputSheet> {
                 height: 16,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: _error != null
+                  color: _isOfflineLogin
+                      ? Colors.orange
+                      : _error != null
                       ? Colors.red
                       : filled
                       ? const Color(0xFF4F6EF7)
@@ -416,6 +494,14 @@ class _PinInputSheetState extends State<_PinInputSheet> {
               );
             }),
           ),
+
+          if (_isOfflineLogin) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Вход офлайн ✓',
+              style: TextStyle(color: Colors.orange, fontSize: 13),
+            ),
+          ],
 
           if (_error != null) ...[
             const SizedBox(height: 10),
@@ -488,8 +574,6 @@ class _PinInputSheetState extends State<_PinInputSheet> {
   }
 }
 
-/// Диалог для выхода хозяина из терминального режима.
-/// Возвращает Map с token/role/username при успехе, null при отмене.
 class _OwnerPasswordDialog extends StatefulWidget {
   const _OwnerPasswordDialog();
 
@@ -515,7 +599,7 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
     );
     if (!mounted) return;
     if (result != null && result['role'] == 'owner') {
-      Navigator.pop(context, result); // возвращаем данные owner'а
+      Navigator.pop(context, result);
     } else {
       setState(() {
         _error = 'Неверный логин или пароль';

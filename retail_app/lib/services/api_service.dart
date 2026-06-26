@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:retail_app/helpers/database_helper.dart';
+import 'package:retail_app/services/connectivity_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'data_refresh_service.dart';
 import '../models/product.dart';
@@ -28,6 +30,8 @@ class ApiService {
   static final GlobalKey<NavigatorState> navigatorKey =
       GlobalKey<NavigatorState>();
 
+  final _db = DatabaseHelper.instance;
+
   Future<Map<String, String>> _getHeaders() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('jwt_token') ?? '';
@@ -51,37 +55,55 @@ class ApiService {
   // ─── Товары ──────────────────────────────────────────────────────────────
 
   Future<Product?> getProductByBarcode(String barcode) async {
-    try {
-      final response = await http
-          .get(
-            Uri.parse('$baseUrl/api/products/$barcode'),
-            headers: await _getHeaders(),
-          )
-          .timeout(const Duration(seconds: 10));
-      _checkSubscription(response.statusCode);
-      if (response.statusCode == 200)
-        return Product.fromJson(jsonDecode(response.body));
-      return null;
-    } catch (e) {
-      return null;
+    if (ConnectivityService.instance.isOnline) {
+      try {
+        final response = await http
+            .get(
+              Uri.parse('$baseUrl/api/products/$barcode'),
+              headers: await _getHeaders(),
+            )
+            .timeout(const Duration(seconds: 10));
+        _checkSubscription(response.statusCode);
+        if (response.statusCode == 200) {
+          final json = jsonDecode(response.body);
+          return Product.fromJson(json);
+        }
+      } catch (_) {
+        // Сетевая ошибка — пробуем кэш
+      }
     }
+
+    // Офлайн или ошибка — ищем в кэше
+    final cached = await _db.getCachedProductByBarcode(barcode);
+    if (cached != null) return Product.fromJson(cached);
+    return null;
   }
 
+  /// Возвращает все товары.
+  /// Онлайн: запрашивает API и обновляет полный кэш.
+  /// Офлайн: возвращает товары из SQLite-кэша.
   Future<List<Product>> getAllProducts() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/products'),
-        headers: await _getHeaders(),
-      );
-      _checkSubscription(response.statusCode);
-      if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
-        return data.map((json) => Product.fromJson(json)).toList();
+    if (ConnectivityService.instance.isOnline) {
+      try {
+        final response = await http.get(
+          Uri.parse('$baseUrl/api/products'),
+          headers: await _getHeaders(),
+        );
+        _checkSubscription(response.statusCode);
+        if (response.statusCode == 200) {
+          final List<dynamic> data = jsonDecode(response.body);
+          // Обновляем кэш свежими данными
+          await _db.cacheProducts(data.cast<Map<String, dynamic>>());
+          return data.map((json) => Product.fromJson(json)).toList();
+        }
+      } catch (_) {
+        // Сетевая ошибка — пробуем кэш
       }
-      return [];
-    } catch (e) {
-      return [];
     }
+
+    // Офлайн — читаем из кэша
+    final cached = await _db.getCachedProducts();
+    return cached.map((json) => Product.fromJson(json)).toList();
   }
 
   Future<bool> addProduct(Map<String, dynamic> productData) async {
@@ -349,61 +371,93 @@ class ApiService {
 
   // ─── Терминальный режим ───────────────────────────────────────────────────
 
-  /// Получить список сотрудников для выбора в терминальном режиме (без JWT)
+  /// Загружает список продавцов для терминала.
+  /// Онлайн: API + кэшируем результат.
+  /// Офлайн: возвращает кэшированный список из SQLite.
   Future<List<dynamic>> getTerminalUsers(int companyId) async {
-    try {
-      final response = await http
-          .get(Uri.parse('$baseUrl/terminal/users?company_id=$companyId'))
-          .timeout(const Duration(seconds: 10));
-      if (response.statusCode == 200) return jsonDecode(response.body);
-      return [];
-    } catch (e) {
-      return [];
+    if (ConnectivityService.instance.isOnline) {
+      try {
+        final response = await http
+            .get(Uri.parse('$baseUrl/terminal/users?company_id=$companyId'))
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body) as List<dynamic>;
+          // Кэшируем список пользователей
+          await _db.cacheTerminalUsers(data.cast<Map<String, dynamic>>());
+          return data;
+        }
+      } catch (_) {}
     }
+
+    // Офлайн — берём из кэша
+    return await _db.getCachedTerminalUsers();
   }
 
-  /// Войти по PIN (терминальный режим) — возвращает токен, роль, имя.
-  /// company_id обязателен: PIN проверяется в паре с компанией, иначе
-  /// подбор 4-значного PIN сработал бы против пользователя любой компании.
+  /// Вход по PIN.
+  /// Онлайн: запрос к API + сохраняем хэш PIN для офлайн-входа.
+  /// Офлайн: проверяем PIN по хэшу в SQLite.
   ///
-  /// Бросает [RateLimitException], если backend ответил 429 (слишком много
-  /// неверных попыток подряд) — экран должен показать пользователю обратный
-  /// отсчёт из `retryAfterSeconds` и заблокировать клавиатуру PIN на это время.
+  /// Бросает [RateLimitException] при 429 (только онлайн).
   Future<Map<String, dynamic>?> pinLogin(
     int userId,
     int companyId,
     String pin,
   ) async {
-    http.Response response;
-    try {
-      response = await http
-          .post(
-            Uri.parse('$baseUrl/terminal/pin-login'),
-            headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'user_id': userId,
-              'company_id': companyId,
-              'pin': pin,
-            }),
-          )
-          .timeout(const Duration(seconds: 10));
-    } catch (e) {
-      // Сетевая ошибка/таймаут — не считаем это неудачной попыткой входа.
+    if (ConnectivityService.instance.isOnline) {
+      http.Response response;
+      try {
+        response = await http
+            .post(
+              Uri.parse('$baseUrl/terminal/pin-login'),
+              headers: const {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'user_id': userId,
+                'company_id': companyId,
+                'pin': pin,
+              }),
+            )
+            .timeout(const Duration(seconds: 10));
+      } catch (e) {
+        // Сетевая ошибка в момент запроса — пробуем офлайн
+        return _pinLoginOffline(userId, pin);
+      }
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        // Сохраняем хэш PIN для будущего офлайн-входа
+        await _db.savePinHash(userId, pin);
+        return data;
+      }
+
+      if (response.statusCode == 429) {
+        final data = jsonDecode(response.body);
+        throw RateLimitException(
+          (data['retry_after_seconds'] as num?)?.toInt() ?? 60,
+          (data['message'] as String?) ??
+              'Слишком много попыток. Попробуйте позже.',
+        );
+      }
       return null;
     }
 
-    if (response.statusCode == 200) return jsonDecode(response.body);
+    // Офлайн
+    return _pinLoginOffline(userId, pin);
+  }
 
-    if (response.statusCode == 429) {
-      final data = jsonDecode(response.body);
-      throw RateLimitException(
-        (data['retry_after_seconds'] as num?)?.toInt() ?? 60,
-        (data['message'] as String?) ??
-            'Слишком много попыток. Попробуйте позже.',
-      );
-    }
+  Future<Map<String, dynamic>?> _pinLoginOffline(int userId, String pin) async {
+    final user = await _db.verifyPinOffline(userId, pin);
+    if (user == null) return null;
 
-    return null;
+    // Формируем ответ аналогично серверному (без настоящего JWT)
+    // Используем сохранённый токен из SharedPreferences если есть,
+    // иначе возвращаем заглушку — экран покажет офлайн-метку.
+    return {
+      'user_id': user['id'],
+      'username': user['username'],
+      'role': user['role'],
+      'token': 'offline_token', // фиктивный токен для офлайн-сессии
+      'offline': true,
+    };
   }
 
   /// Войти как владелец (для выхода из терминального режима)
@@ -464,25 +518,31 @@ class ApiService {
   Future<bool> createSaleFromRawData(Map<String, dynamic> saleData) async =>
       sendSale(saleData);
 
+  /// Поиск по названию.
+  /// Онлайн: запрос к API.
+  /// Офлайн: LIKE-поиск по SQLite-кэшу.
   Future<List<Product>> searchProductsByName(String query) async {
-    try {
-      final response = await http
-          .get(
-            Uri.parse(
-              '$baseUrl/api/products/search?q=${Uri.encodeComponent(query)}',
-            ),
-            headers: await _getHeaders(),
-          )
-          .timeout(const Duration(seconds: 5));
-      _checkSubscription(response.statusCode);
-      if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
-        return data.map((json) => Product.fromJson(json)).toList();
-      }
-      return [];
-    } catch (_) {
-      return [];
+    if (ConnectivityService.instance.isOnline) {
+      try {
+        final response = await http
+            .get(
+              Uri.parse(
+                '$baseUrl/api/products/search?q=${Uri.encodeComponent(query)}',
+              ),
+              headers: await _getHeaders(),
+            )
+            .timeout(const Duration(seconds: 5));
+        _checkSubscription(response.statusCode);
+        if (response.statusCode == 200) {
+          final List<dynamic> data = jsonDecode(response.body);
+          return data.map((json) => Product.fromJson(json)).toList();
+        }
+      } catch (_) {}
     }
+
+    // Офлайн — ищем в кэше
+    final cached = await _db.searchCachedProductsByName(query);
+    return cached.map((json) => Product.fromJson(json)).toList();
   }
 
   Future<bool> cancelSale(int saleId, String reason) async {

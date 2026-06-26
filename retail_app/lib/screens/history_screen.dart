@@ -18,15 +18,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Отмена чека №$saleId'),
+        title: Text('Бекор кардани чек №$saleId'),
         content: TextField(
           controller: controller,
-          decoration: const InputDecoration(hintText: 'Причина отмены'),
+          decoration: const InputDecoration(hintText: 'Сабаби бекоркунӣ'),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Назад'),
+            child: const Text('Қафо'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
@@ -40,7 +40,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               }
             },
             child: const Text(
-              'ОТМЕНИТЬ',
+              'БЕКОР КАРДАН',
               style: TextStyle(color: Colors.white),
             ),
           ),
@@ -54,7 +54,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   String _dayKey(dynamic sale) {
     final createdAt = (sale['created_at'] ?? '').toString();
     if (createdAt.length >= 10) return createdAt.substring(0, 10);
-    return 'Без даты';
+    return 'Санаи рӯз нест';
   }
 
   String _dayLabel(String dayKey) {
@@ -65,8 +65,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final yesterday =
         '${yesterdayDt.day.toString().padLeft(2, '0')}.${yesterdayDt.month.toString().padLeft(2, '0')}.${yesterdayDt.year}';
 
-    if (dayKey == today) return 'Сегодня · $dayKey';
-    if (dayKey == yesterday) return 'Вчера · $dayKey';
+    if (dayKey == today) return 'Имрӯз: $dayKey';
+    if (dayKey == yesterday) return 'Дирӯз: $dayKey';
     return dayKey;
   }
 
@@ -93,7 +93,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('История продаж')),
+      appBar: AppBar(title: const Text('Таърихи фурӯш')),
       body: FutureBuilder<List<dynamic>>(
         // Каждый раз, когда вызывается setState, FutureBuilder будет срабатывать снова
         future: _apiService.getSalesHistory(),
@@ -102,7 +102,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             return const Center(child: CircularProgressIndicator());
           }
           if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(child: Text('Продаж пока нет'));
+            return const Center(child: Text('Ҳанӯз фурӯш нашудааст'));
           }
 
           final grouped = _groupByDay(snapshot.data!);
@@ -148,14 +148,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   subtitle: Text(
-                    '${daySales.length} чек(ов)'
-                    '${canceledCount > 0 ? ' · отменено: $canceledCount' : ''}',
+                    '${daySales.length} чек'
+                    '${canceledCount > 0 ? ' · бекор карда шуд: $canceledCount' : ''}',
                     style: const TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                   trailing: Padding(
                     padding: const EdgeInsets.only(right: 4),
                     child: Text(
-                      '${dayTotal.toStringAsFixed(2)} см.',
+                      '${dayTotal.toStringAsFixed(2)} сомонӣ',
                       style: const TextStyle(
                         fontWeight: FontWeight.w800,
                         color: Color(0xFF27AE60),
@@ -172,12 +172,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         color: isCanceled ? Colors.grey : Colors.blue,
                       ),
                       title: Text(
-                        'Чек №${sale['id']} — ${sale['total_amount']} Сомони',
+                        'Чек №${sale['id']} — ${sale['total_amount']} Сомонӣ',
                       ),
                       subtitle: Text(
                         isCanceled
-                            ? 'ОТМЕНЕН: ${sale['cancel_reason']}'
-                            : 'Продавец: ${sale['seller_name'] ?? sale['seller_id']}',
+                            ? 'БЕКОР КАРДА ШУД: ${sale['cancel_reason']}'
+                            : 'Фурӯшанда: ${sale['seller_name'] ?? sale['seller_id']}',
                       ),
 
                       // КНОПКА ВЫЗОВА ДИАЛОГА

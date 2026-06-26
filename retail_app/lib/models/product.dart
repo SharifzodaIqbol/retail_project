@@ -18,7 +18,7 @@ class Product {
   });
 
   /// Человекочитаемое название единицы измерения для UI.
-  String get unitLabel => unit == 'kg' ? 'кг' : 'шт';
+  String get unitLabel => unit == 'kg' ? 'кг' : 'дона';
 
   // Теперь мапим ключи именно так, как они приходят из Go
   factory Product.fromJson(Map<String, dynamic> json) {

@@ -49,7 +49,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Добавить должника'),
+        title: const Text('Илова кардани қарздор'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -57,7 +57,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
               TextField(
                 controller: nameCtrl,
                 decoration: const InputDecoration(
-                  labelText: 'Имя должника *',
+                  labelText: 'Номи қарздор *',
                   border: OutlineInputBorder(),
                 ),
                 textCapitalization: TextCapitalization.words,
@@ -67,9 +67,9 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                 controller: phoneCtrl,
                 keyboardType: TextInputType.phone,
                 decoration: const InputDecoration(
-                  labelText: 'Телефон (необязательно)',
+                  labelText: 'Телефон (ихтиёрӣ)',
                   border: OutlineInputBorder(),
-                  prefixText: '+',
+                  prefixText: '+992 ',
                 ),
               ),
               const SizedBox(height: 12),
@@ -82,7 +82,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                   FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
                 ],
                 decoration: const InputDecoration(
-                  labelText: 'Начальный долг (сомони)',
+                  labelText: 'Миқдори қарз (сомонӣ)',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -90,7 +90,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
               TextField(
                 controller: noteCtrl,
                 decoration: const InputDecoration(
-                  labelText: 'Комментарий (необязательно)',
+                  labelText: 'Фаҳмондадиҳи (ихтиерӣ)',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -100,7 +100,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -119,15 +119,12 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
               Navigator.pop(context);
               if (result != null) {
                 _load();
-                _showSnack('Должник добавлен', Colors.green);
+                _showSnack('Қарздор илова карда шуд', Colors.green);
               } else {
-                _showSnack('Ошибка добавления', Colors.red);
+                _showSnack('Хатогӣ дар илова', Colors.red);
               }
             },
-            child: const Text(
-              'Сохранить',
-              style: TextStyle(color: Colors.white),
-            ),
+            child: const Text('Захира', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -145,7 +142,9 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text(isPay ? '💳 Внести оплату' : '➕ Добавить долг'),
+        title: Text(
+          isPay ? '💳 Пардохтро ворид кунед' : '➕ Илова кардани қарз',
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -155,7 +154,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
               style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
             ),
             Text(
-              'Текущий долг: ${totalDebt.toStringAsFixed(2)} сомони',
+              'Қарзи ҳозира: ${totalDebt.toStringAsFixed(2)} сомонӣ',
               style: TextStyle(
                 color: totalDebt > 0 ? Colors.red.shade600 : Colors.green,
                 fontSize: 13,
@@ -172,14 +171,14 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                 FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
               ],
               decoration: InputDecoration(
-                labelText: 'Сумма (сомони) *',
+                labelText: 'Маблағ (сомонӣ) *',
                 border: const OutlineInputBorder(),
                 suffix: isPay
                     ? TextButton(
                         style: TextButton.styleFrom(padding: EdgeInsets.zero),
                         onPressed: () =>
                             amountCtrl.text = totalDebt.toStringAsFixed(2),
-                        child: const Text('Всё'),
+                        child: const Text('Ҳамааш'),
                       )
                     : null,
               ),
@@ -188,7 +187,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
             TextField(
               controller: noteCtrl,
               decoration: const InputDecoration(
-                labelText: 'Комментарий (необязательно)',
+                labelText: 'Фаҳмондадиҳи (ихтиерӣ)',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -197,7 +196,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -217,15 +216,15 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
               if (result != null) {
                 _load();
                 _showSnack(
-                  isPay ? 'Оплата записана' : 'Долг добавлен',
+                  isPay ? 'Пардохт сабт шудааст' : 'Қарз илова карда шуд',
                   isPay ? Colors.green : Colors.orange,
                 );
               } else {
-                _showSnack('Ошибка операции', Colors.red);
+                _showSnack('Хатои амалиёт', Colors.red);
               }
             },
             child: Text(
-              isPay ? 'Записать оплату' : 'Добавить долг',
+              isPay ? 'Пардохтро сабт кунед' : 'Иловаи қарз',
               style: const TextStyle(color: Colors.white),
             ),
           ),
@@ -260,7 +259,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'История: ${debtor['full_name']}',
+                      'Таърих: ${debtor['full_name']}',
                       style: const TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 16,
@@ -273,7 +272,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
             const Divider(height: 1),
             Expanded(
               child: history.isEmpty
-                  ? const Center(child: Text('Нет операций'))
+                  ? const Center(child: Text('Амалиёт нест'))
                   : ListView.builder(
                       controller: scrollCtrl,
                       itemCount: history.length,
@@ -292,7 +291,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                             ),
                           ),
                           title: Text(
-                            '${isPay ? '−' : '+'}${(h['amount'] as num).toStringAsFixed(2)} сомони',
+                            '${isPay ? '−' : '+'}${(h['amount'] as num).toStringAsFixed(2)} сомонӣ',
                             style: TextStyle(
                               fontWeight: FontWeight.w600,
                               color: isPay
@@ -333,19 +332,22 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Удалить должника?'),
+        title: const Text('Номи қарздорро нест кунем?'),
         content: Text(
-          '«${debtor['full_name']}» будет удалён вместе со всей историей.',
+          '«${debtor['full_name']}» бо тамоми таърих нест карда мешавад.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Удалить', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Нест кардан',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -354,7 +356,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
       final ok = await _api.deleteDebtor(debtor['id']);
       if (ok && mounted) {
         _load();
-        _showSnack('Должник удалён', Colors.grey);
+        _showSnack('Номи қарздо нест шуд', Colors.grey);
       }
     }
   }
@@ -390,7 +392,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
         title: const Text(
-          'Долговая книга',
+          'Дафтарчаи қарз',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
         backgroundColor: Colors.white,
@@ -404,7 +406,10 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
         onPressed: _showAddDebtorDialog,
         backgroundColor: const Color(0xFF4F6EF7),
         icon: const Icon(Icons.person_add, color: Colors.white),
-        label: const Text('Добавить', style: TextStyle(color: Colors.white)),
+        label: const Text(
+          'Илова кардан',
+          style: TextStyle(color: Colors.white),
+        ),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -439,14 +444,14 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const Text(
-                                'Общий долг',
+                                'Умуми қарз',
                                 style: TextStyle(
                                   color: Colors.white70,
                                   fontSize: 12,
                                 ),
                               ),
                               Text(
-                                '${totalDebt.toStringAsFixed(2)} сомони',
+                                '${totalDebt.toStringAsFixed(2)} сомонӣ',
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.w800,
@@ -457,7 +462,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                           ),
                           const Spacer(),
                           Text(
-                            '${_debtors.length} чел.',
+                            '${_debtors.length} одам',
                             style: const TextStyle(
                               color: Colors.white70,
                               fontSize: 13,
@@ -481,7 +486,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                                 ),
                                 const SizedBox(height: 12),
                                 Text(
-                                  'Должников нет',
+                                  'Ҳеҷ кас қарздор нест',
                                   style: TextStyle(
                                     color: Colors.grey.shade500,
                                     fontSize: 16,
@@ -595,8 +600,8 @@ class _DebtorCard extends StatelessWidget {
                   children: [
                     Text(
                       isPaid
-                          ? '✅ Оплачен'
-                          : '${debt.toStringAsFixed(2)} сомони',
+                          ? '✅ Пардохт шуд'
+                          : '${debt.toStringAsFixed(2)} сомонӣ',
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 15,
@@ -604,8 +609,8 @@ class _DebtorCard extends StatelessWidget {
                       ),
                     ),
                     const Text(
-                      'долг',
-                      style: TextStyle(color: Colors.grey, fontSize: 11),
+                      'қарз',
+                      style: TextStyle(color: Colors.grey, fontSize: 12),
                     ),
                   ],
                 ),
@@ -621,7 +626,7 @@ class _DebtorCard extends StatelessWidget {
                 // Оплата
                 Expanded(
                   child: _ActionBtn(
-                    label: 'Оплата',
+                    label: 'Пардохт',
                     icon: Icons.payments_outlined,
                     color: Colors.green,
                     onTap: onPay,
@@ -631,7 +636,7 @@ class _DebtorCard extends StatelessWidget {
                 // Добавить долг
                 Expanded(
                   child: _ActionBtn(
-                    label: '+ Долг',
+                    label: '+ Қарз',
                     icon: Icons.add_circle_outline,
                     color: const Color(0xFF4F6EF7),
                     onTap: onTake,
@@ -642,7 +647,7 @@ class _DebtorCard extends StatelessWidget {
                 _IconBtn(
                   icon: Icons.history,
                   color: Colors.grey.shade600,
-                  tooltip: 'История',
+                  tooltip: 'Таърих',
                   onTap: onHistory,
                 ),
                 // Удалить (только owner)
@@ -650,7 +655,7 @@ class _DebtorCard extends StatelessWidget {
                   _IconBtn(
                     icon: Icons.delete_outline,
                     color: Colors.red,
-                    tooltip: 'Удалить',
+                    tooltip: 'Тоза кардан',
                     onTap: onDelete,
                   ),
               ],

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart';
 import 'providers/cart_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
@@ -11,8 +12,16 @@ import 'screens/terminal_screen.dart';
 import 'screens/owner_panel_screen.dart';
 import 'screens/debtors_screen.dart';
 import 'services/api_service.dart';
+import 'services/connectivity_service.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (kIsWeb) {
+    databaseFactory = databaseFactoryFfiWeb;
+  }
+  await ConnectivityService.instance.init();
   runApp(
     MultiProvider(
       providers: [ChangeNotifierProvider(create: (_) => CartProvider())],
@@ -28,7 +37,7 @@ class RetailApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Retail POS',
+      title: 'Савидор',
       navigatorKey: ApiService.navigatorKey,
       theme: ThemeData(
         primaryColor: const Color(0xFF4F6EF7),
@@ -99,22 +108,17 @@ class _BootstrapperState extends State<_Bootstrapper> {
     setState(() => _terminalMode = true);
   }
 
-  /// Продавец нажал "Выйти" — возвращаемся на PIN-экран (терминал остаётся активным)
   void _onSellerLogout() async {
     final prefs = await SharedPreferences.getInstance();
-    // Очищаем токен продавца, но terminal_mode и company_id оставляем
     await prefs.remove('jwt_token');
     await prefs.remove('user_role');
     await prefs.remove('username');
-    // НЕ трогаем terminal_mode — он остаётся true
-    await _checkAuth(); // перечитываем: token пустой → покажем TerminalScreen
+    await _checkAuth();
   }
 
-  /// Хозяин вышел из терминального режима — очищаем всё и показываем логин
   void _onOwnerExitTerminal() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('terminal_mode', false);
-    // jwt_token уже сохранён (owner снова авторизован через _OwnerPasswordDialog)
     await _checkAuth();
   }
 
@@ -124,15 +128,16 @@ class _BootstrapperState extends State<_Bootstrapper> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    // Терминальный режим активен, но пользователь не вошёл (или вышел продавец)
     if (_terminalMode && !_loggedIn) {
       return TerminalScreen(
         companyId: _companyId,
         companyName: _companyName,
         onSellerLogin: (token, role, username) async {
-          // Продавец ввёл PIN и вошёл
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('jwt_token', token);
+          // Офлайн-токен не сохраняем в SharedPreferences — только имя и роль
+          if (token != 'offline_token') {
+            await prefs.setString('jwt_token', token);
+          }
           await prefs.setString('user_role', role);
           await prefs.setString('username', username);
           await _checkAuth();
@@ -141,19 +146,19 @@ class _BootstrapperState extends State<_Bootstrapper> {
       );
     }
 
-    // Не авторизован — показываем логин (только для owner)
     if (!_loggedIn) {
       return LoginScreen(onLogin: _onLogin);
     }
 
-    // Авторизован как owner в терминальном режиме — показываем терминал для выбора продавца
     if (_terminalMode && _role == 'owner') {
       return TerminalScreen(
         companyId: _companyId,
         companyName: _companyName,
         onSellerLogin: (token, role, username) async {
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('jwt_token', token);
+          if (token != 'offline_token') {
+            await prefs.setString('jwt_token', token);
+          }
           await prefs.setString('user_role', role);
           await prefs.setString('username', username);
           await _checkAuth();
@@ -162,7 +167,6 @@ class _BootstrapperState extends State<_Bootstrapper> {
       );
     }
 
-    // Обычный режим — главная оболочка
     return MainShell(
       role: _role,
       onEnterTerminal: _onEnterTerminal,
@@ -174,7 +178,7 @@ class _BootstrapperState extends State<_Bootstrapper> {
 class MainShell extends StatefulWidget {
   final String role;
   final VoidCallback onEnterTerminal;
-  final VoidCallback? onSellerLogout; // если в терминальном режиме
+  final VoidCallback? onSellerLogout;
 
   const MainShell({
     super.key,
@@ -197,15 +201,15 @@ class _MainShellState extends State<MainShell> {
         label: 'Касса',
         screen: HomeScreen(onSellerLogout: widget.onSellerLogout),
       ),
-      _NavItem(icon: Icons.history, label: 'История', screen: HistoryScreen()),
+      _NavItem(icon: Icons.history, label: 'Таърих', screen: HistoryScreen()),
       _NavItem(
         icon: Icons.inventory_2,
-        label: 'Склад',
+        label: 'Анбор',
         screen: const InventoryScreen(),
       ),
       _NavItem(
         icon: Icons.menu_book,
-        label: 'Долги',
+        label: 'Қарзҳо',
         screen: DebtorsScreen(role: widget.role),
       ),
     ];
@@ -214,14 +218,14 @@ class _MainShellState extends State<MainShell> {
       items.add(
         _NavItem(
           icon: Icons.bar_chart,
-          label: 'Аналитика',
+          label: 'Таҳлилҳо',
           screen: const AnalyticsScreen(),
         ),
       );
       items.add(
         _NavItem(
           icon: Icons.manage_accounts,
-          label: 'Управление',
+          label: 'Идоракунӣ',
           screen: OwnerPanelScreen(onEnterTerminal: widget.onEnterTerminal),
         ),
       );
@@ -233,7 +237,6 @@ class _MainShellState extends State<MainShell> {
   @override
   Widget build(BuildContext context) {
     final items = _navItems;
-
     return Scaffold(
       body: IndexedStack(
         index: _currentIndex,

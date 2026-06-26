@@ -67,7 +67,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
         title: const Text(
-          'Аналитика',
+          'Таҳлилҳо',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
         backgroundColor: Colors.white,
@@ -79,9 +79,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           unselectedLabelColor: Colors.grey,
           indicatorColor: const Color(0xFF4F6EF7),
           tabs: const [
-            Tab(text: 'Обзор'),
-            Tab(text: 'Топ товары'),
-            Tab(text: 'Продавцы'),
+            Tab(text: 'Шарҳи умумӣ'),
+            Tab(text: 'Маҳсулоти бисёр харида шуда'),
+            Tab(text: 'Фурӯшандагон'),
           ],
         ),
         actions: [
@@ -132,30 +132,30 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
                   _MetricCard(
-                    label: 'Выручка',
+                    label: 'Фурӯш',
                     value: _fmt(_summary!['revenue']),
-                    unit: 'сом.',
+                    unit: 'Сомонӣ',
                     color: const Color(0xFF4F6EF7),
                     icon: Icons.trending_up,
                   ),
                   _MetricCard(
-                    label: 'Прибыль',
+                    label: 'Фоида',
                     value: _fmt(_summary!['profit']),
-                    unit: 'сом.',
+                    unit: 'Сомонӣ',
                     color: const Color(0xFF27AE60),
                     icon: Icons.account_balance_wallet,
                   ),
                   _MetricCard(
-                    label: 'Продаж',
+                    label: 'Миқдори харид',
                     value: '${_summary!['sales_count']}',
-                    unit: 'чеков',
+                    unit: 'чек',
                     color: const Color(0xFFE67E22),
                     icon: Icons.receipt_long,
                   ),
                   _MetricCard(
-                    label: 'Ср. чек',
+                    label: 'Ба ҳисоби миёна чек',
                     value: _fmt(_summary!['avg_check']),
-                    unit: 'сом.',
+                    unit: 'Сомонӣ',
                     color: const Color(0xFF9B59B6),
                     icon: Icons.calculate,
                   ),
@@ -167,7 +167,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
             // Мини-график выручки по дням
             const Text(
-              'Выручка за 7 дней',
+              'Фоида 7 рӯза',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 12),
@@ -180,7 +180,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
 
   Widget _buildBarChart() {
     if (_salesByDay.isEmpty) {
-      return const Center(child: Text('Нет данных'));
+      return const Center(child: Text('Маълумот нест'));
     }
 
     final maxRevenue = _salesByDay
@@ -248,7 +248,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   // ── Вкладка: Топ товары ─────────────────────────────────────
   Widget _buildTopProducts() {
     if (_topProducts.isEmpty) {
-      return const Center(child: Text('Нет данных'));
+      return const Center(child: Text('Маълумот нест'));
     }
 
     final maxQty = _topProducts
@@ -307,7 +307,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                     ),
                   ),
                   Text(
-                    '${qty.toInt()} шт.',
+                    '${qty.toInt()} дона.',
                     style: const TextStyle(
                       color: Color(0xFF4F6EF7),
                       fontWeight: FontWeight.w700,
@@ -343,7 +343,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   // ── Вкладка: Продавцы ───────────────────────────────────────
   Widget _buildSellers() {
     if (_sellers.isEmpty) {
-      return const Center(child: Text('Нет данных за сегодня'));
+      return const Center(child: Text('Маълумот нест барои имрӯз'));
     }
 
     return ListView.separated(
@@ -383,14 +383,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                     Text(
-                      '${s['sales_count']} продаж',
+                      '${s['sales_count']} фурӯш',
                       style: const TextStyle(color: Colors.grey, fontSize: 13),
                     ),
                   ],
                 ),
               ),
               Text(
-                '${_fmt(s['total_revenue'])} сом.',
+                '${_fmt(s['total_revenue'])} Сомонӣ',
                 style: const TextStyle(
                   fontWeight: FontWeight.w700,
                   color: Color(0xFF27AE60),
@@ -458,7 +458,7 @@ class _PeriodSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const periods = {'today': 'Сегодня', 'week': 'Неделя', 'month': 'Месяц'};
+    const periods = {'today': 'Имӯз', 'week': 'Ҳафта', 'month': 'Моҳ'};
 
     return Container(
       decoration: BoxDecoration(
