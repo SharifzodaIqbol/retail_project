@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"retail-managment-system/internal/auth"
@@ -18,6 +17,7 @@ func (h *Handler) getAllUsers(c *gin.Context) {
 	companyID, _ := c.Get("company_id")
 	list, err := h.userRepo.GetAllByCompany(context.Background(), companyID.(int))
 	if err != nil {
+		logErr(c, err, "Ошибка получения списка сотрудников", "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Ошибка"})
 		return
 	}
@@ -34,8 +34,8 @@ func (h *Handler) createUser(c *gin.Context) {
 	}
 
 	ownerCompanyID, exists := c.Get("company_id")
-	log.Println(ownerCompanyID)
 	if !exists {
+		logWarn(c, "Создание сотрудника: company_id не определён в контексте запроса")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Компания создателя не определена"})
 		return
 	}
@@ -58,11 +58,13 @@ func (h *Handler) createUser(c *gin.Context) {
 		}
 		pinHash, err := auth.HashPassword(req.Pin)
 		if err != nil {
+			logErr(c, err, "Создание продавца: ошибка хэширования PIN", "company_id", ownerCompanyID)
 			c.JSON(500, gin.H{"error": "Ошибка хэширования PIN"})
 			return
 		}
 		user.PinHash = pinHash
 		if err := h.userRepo.CreateSeller(context.Background(), user); err != nil {
+			logErr(c, err, "Ошибка создания продавца", "company_id", ownerCompanyID, "username", user.Username)
 			c.JSON(500, gin.H{"error": "Ошибка создания продавца"})
 			return
 		}
@@ -82,16 +84,19 @@ func (h *Handler) createUser(c *gin.Context) {
 			}
 			pinHash, err := auth.HashPassword(req.Pin)
 			if err != nil {
+				logErr(c, err, "Создание пользователя с PIN: ошибка хэширования PIN", "company_id", ownerCompanyID)
 				c.JSON(500, gin.H{"error": "Ошибка хэширования PIN"})
 				return
 			}
 			user.PinHash = pinHash
 			if err := h.userRepo.CreateWithPin(context.Background(), user); err != nil {
+				logErr(c, err, "Ошибка создания пользователя с PIN", "company_id", ownerCompanyID, "username", user.Username)
 				c.JSON(500, gin.H{"error": "Ошибка создания пользователя"})
 				return
 			}
 		} else {
 			if err := h.userRepo.Create(context.Background(), user); err != nil {
+				logErr(c, err, "Ошибка создания пользователя", "company_id", ownerCompanyID, "username", user.Username)
 				c.JSON(500, gin.H{"error": "Ошибка создания пользователя"})
 				return
 			}
@@ -109,6 +114,7 @@ func (h *Handler) deleteUser(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 	id, _ := strconv.Atoi(c.Param("id"))
 	if err := h.userRepo.Delete(context.Background(), id, companyID); err != nil {
+		logErr(c, err, "Ошибка удаления сотрудника", "user_id", id, "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Ошибка удаления"})
 		return
 	}
@@ -132,17 +138,20 @@ func (h *Handler) setUserPin(c *gin.Context) {
 	companyID, _ := c.Get("company_id")
 	_, err = h.userRepo.GetByIDAndCompany(context.Background(), id, companyID.(int))
 	if err != nil {
+		logWarn(c, "Установка PIN: пользователь не найден", "user_id", id, "company_id", companyID)
 		c.JSON(404, gin.H{"error": "Пользователь не найден"})
 		return
 	}
 
 	pinHash, err := auth.HashPassword(req.Pin)
 	if err != nil {
+		logErr(c, err, "Ошибка хэширования PIN при установке", "user_id", id, "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Ошибка хэширования"})
 		return
 	}
 
 	if err := h.userRepo.SetPin(context.Background(), id, companyID.(int), pinHash); err != nil {
+		logErr(c, err, "Ошибка сохранения PIN", "user_id", id, "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Ошибка сохранения PIN"})
 		return
 	}
@@ -189,6 +198,7 @@ func (h *Handler) pinLogin(c *gin.Context) {
 	if err != nil || user.PinHash == "" {
 		h.pinLimiter.RecordFailure(attemptKey)
 		h.pinIPLimiter.RecordFailure(ipKey)
+		logWarn(c, "Вход по PIN: PIN не установлен или пользователь не найден", "user_id", req.UserID, "company_id", req.CompanyID, "ip", ip)
 		c.JSON(401, gin.H{"error": "PIN не установлен"})
 		return
 	}
@@ -196,6 +206,7 @@ func (h *Handler) pinLogin(c *gin.Context) {
 	if !auth.CheckPasswordHash(req.Pin, user.PinHash) {
 		h.pinLimiter.RecordFailure(attemptKey)
 		h.pinIPLimiter.RecordFailure(ipKey)
+		logWarn(c, "Вход по PIN: неверный PIN", "user_id", req.UserID, "company_id", req.CompanyID, "ip", ip)
 		c.JSON(401, gin.H{"error": "Неверный PIN"})
 		return
 	}
@@ -203,7 +214,7 @@ func (h *Handler) pinLogin(c *gin.Context) {
 
 	token, errToken := auth.GenerateToken(user.ID, user.CompanyID, user.Role, os.Getenv("JWT_SECRET"))
 	if errToken != nil {
-		log.Println("Ошибка генерации JWT:", errToken)
+		logErr(c, errToken, "Ошибка генерации JWT токена при входе по PIN", "user_id", user.ID, "company_id", user.CompanyID)
 		c.JSON(500, gin.H{"error": "Ошибка сервера"})
 		return
 	}
@@ -226,6 +237,7 @@ func (h *Handler) getTerminalUsers(c *gin.Context) {
 
 	list, err := h.userRepo.GetAllByCompany(context.Background(), companyID)
 	if err != nil {
+		logErr(c, err, "Ошибка получения списка пользователей терминала", "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Ошибка"})
 		return
 	}
@@ -261,6 +273,7 @@ func (h *Handler) generateTgLinkToken(c *gin.Context) {
 
 	token, err := h.userRepo.GenerateTgLinkToken(context.Background(), userID.(int))
 	if err != nil {
+		logErr(c, err, "Ошибка генерации токена привязки Telegram", "user_id", userID)
 		c.JSON(500, gin.H{"error": "Ошибка генерации токена"})
 		return
 	}
@@ -276,7 +289,7 @@ func (h *Handler) generateTgLinkToken(c *gin.Context) {
 func (h *Handler) unlinkTelegram(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	if err := h.userRepo.InvalidateTgLink(context.Background(), userID.(int)); err != nil {
-		log.Println(err)
+		logErr(c, err, "Ошибка отвязки Telegram", "user_id", userID)
 		c.JSON(500, gin.H{"error": "Ошибка"})
 		return
 	}

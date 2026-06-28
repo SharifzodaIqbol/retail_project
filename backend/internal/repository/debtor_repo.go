@@ -15,16 +15,29 @@ func NewDebtorRepository(db *pgxpool.Pool) *DebtorRepository {
 	return &DebtorRepository{db: db}
 }
 
-// GetAll — список всех должников компании (только своя компания по company_id)
-func (r *DebtorRepository) GetAll(ctx context.Context, companyID int) ([]domain.Debtor, error) {
+// GetAll — возвращает страницу должников компании с пагинацией.
+// limit  — количество записей на странице (рекомендуется 50).
+// offset — смещение (= (page-1) * limit).
+func (r *DebtorRepository) GetAll(ctx context.Context, companyID int, limit, offset int) ([]domain.Debtor, int, error) {
+	// Общее количество для вычисления total_pages
+	var total int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM debtors WHERE company_id = $1`,
+		companyID,
+	).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	rows, err := r.db.Query(ctx, `
 		SELECT id, company_id, full_name, COALESCE(phone,''), total_debt, updated_at
 		FROM debtors
 		WHERE company_id = $1
 		ORDER BY updated_at DESC
-	`, companyID)
+		LIMIT $2 OFFSET $3
+	`, companyID, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -32,14 +45,14 @@ func (r *DebtorRepository) GetAll(ctx context.Context, companyID int) ([]domain.
 	for rows.Next() {
 		var d domain.Debtor
 		if err := rows.Scan(&d.ID, &d.CompanyID, &d.FullName, &d.Phone, &d.TotalDebt, &d.UpdatedAt); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		list = append(list, d)
 	}
 	if list == nil {
 		list = []domain.Debtor{}
 	}
-	return list, nil
+	return list, total, nil
 }
 
 // GetByID — получить должника по id (с проверкой company_id — изоляция данных)

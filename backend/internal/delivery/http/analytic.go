@@ -2,23 +2,17 @@ package http
 
 import (
 	"context"
-	"log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
-
-// ВСЕ методы ниже ИСПРАВЛЕНЫ: раньше аналитика (выручка, топ товаров, продажи
-// по дням, низкий остаток, статистика продавцов) считалась по ВСЕМ компаниям
-// в системе сразу — то есть владелец одной компании видел суммарную выручку,
-// чеки и склад всех остальных компаний. Теперь все запросы строго
-// ограничены company_id текущего владельца.
 
 func (h *Handler) getAnalyticsSummary(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 	period := c.DefaultQuery("period", "today")
 	summary, err := h.saleRepo.GetPeriodSummary(context.Background(), companyID, period)
 	if err != nil {
+		logErr(c, err, "Ошибка получения сводки аналитики", "company_id", companyID, "period", period)
 		c.JSON(500, gin.H{"error": "Ошибка получения данных"})
 		return
 	}
@@ -31,6 +25,7 @@ func (h *Handler) getTopProducts(c *gin.Context) {
 	limit, _ := strconv.Atoi(limitStr)
 	products, err := h.saleRepo.GetTopProductsDetailed(context.Background(), companyID, limit)
 	if err != nil {
+		logErr(c, err, "Ошибка получения топа товаров", "company_id", companyID, "limit", limit)
 		c.JSON(500, gin.H{"error": "Ошибка"})
 		return
 	}
@@ -42,7 +37,7 @@ func (h *Handler) getSalesByDay(c *gin.Context) {
 	days, _ := strconv.Atoi(c.DefaultQuery("days", "7"))
 	data, err := h.saleRepo.GetSalesByDay(context.Background(), companyID, days)
 	if err != nil {
-		log.Printf("[ERROR] Failed to get sales by day: %v", err)
+		logErr(c, err, "Ошибка получения продаж по дням", "company_id", companyID, "days", days)
 		c.JSON(500, gin.H{"error": "Ошибка"})
 		return
 	}
@@ -54,6 +49,7 @@ func (h *Handler) getLowStock(c *gin.Context) {
 	threshold, _ := strconv.Atoi(c.DefaultQuery("threshold", "10"))
 	products, err := h.productRepo.GetLowStockProducts(context.Background(), companyID, threshold)
 	if err != nil {
+		logErr(c, err, "Ошибка получения товаров с низким остатком", "company_id", companyID, "threshold", threshold)
 		c.JSON(500, gin.H{"error": "Ошибка"})
 		return
 	}
@@ -64,6 +60,7 @@ func (h *Handler) getSellerStats(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 	stats, err := h.saleRepo.GetSellerStats(context.Background(), companyID)
 	if err != nil {
+		logErr(c, err, "Ошибка получения статистики продавцов", "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Ошибка"})
 		return
 	}

@@ -62,7 +62,10 @@ func NewHandler(
 
 // InitRoutes регистрирует все роуты
 func (h *Handler) InitRoutes() *gin.Engine {
-	r := gin.Default()
+	r := gin.New()
+	r.Use(middleware.RequestID())
+	r.Use(middleware.Recovery())
+	r.Use(middleware.AccessLog())
 	r.Use(middleware.CorsMiddleware())
 
 	// Публичные роуты

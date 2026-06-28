@@ -14,6 +14,7 @@ func (h *Handler) getShops(c *gin.Context) {
 	companyID, _ := c.Get("company_id")
 	shops, err := h.shopRepo.GetAllByCompany(context.Background(), companyID.(int))
 	if err != nil {
+		logErr(c, err, "Ошибка получения списка магазинов", "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Ошибка"})
 		return
 	}
@@ -27,12 +28,14 @@ func (h *Handler) getShops(c *gin.Context) {
 func (h *Handler) createShop(c *gin.Context) {
 	var req domain.CreateShopRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		logWarn(c, "Создание магазина: неверный формат запроса", "error", err.Error())
 		c.JSON(400, gin.H{"error": "Укажите название магазина"})
 		return
 	}
 	companyID, _ := c.Get("company_id")
 	shop, err := h.shopRepo.Create(context.Background(), companyID.(int), req.Name)
 	if err != nil {
+		logErr(c, err, "Ошибка создания магазина", "company_id", companyID, "name", req.Name)
 		c.JSON(500, gin.H{"error": "Ошибка создания магазина"})
 		return
 	}
@@ -44,11 +47,13 @@ func (h *Handler) updateShop(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	var req domain.CreateShopRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		logWarn(c, "Обновление магазина: неверный формат запроса", "shop_id", id, "error", err.Error())
 		c.JSON(400, gin.H{"error": "Укажите название"})
 		return
 	}
 	companyID, _ := c.Get("company_id")
 	if err := h.shopRepo.Update(context.Background(), id, companyID.(int), req.Name); err != nil {
+		logErr(c, err, "Ошибка обновления магазина", "shop_id", id, "company_id", companyID, "name", req.Name)
 		c.JSON(500, gin.H{"error": "Ошибка обновления"})
 		return
 	}
@@ -60,6 +65,7 @@ func (h *Handler) deleteShop(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	companyID, _ := c.Get("company_id")
 	if err := h.shopRepo.Delete(context.Background(), id, companyID.(int)); err != nil {
+		logErr(c, err, "Ошибка удаления магазина", "shop_id", id, "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Ошибка удаления"})
 		return
 	}

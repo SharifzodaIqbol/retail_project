@@ -118,7 +118,20 @@ func (r *SaleRepository) GetTopProducts(ctx context.Context, companyID int, limi
 	return report, nil
 }
 
-func (r *SaleRepository) GetAll(ctx context.Context, companyID int) ([]domain.Sale, error) {
+// GetAll — возвращает страницу истории продаж с пагинацией.
+// limit  — количество записей на странице (рекомендуется 50).
+// offset — смещение (= (page-1) * limit).
+func (r *SaleRepository) GetAll(ctx context.Context, companyID int, limit, offset int) ([]domain.Sale, int, error) {
+	// Общее количество для вычисления total_pages
+	var total int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sales WHERE company_id = $1`,
+		companyID,
+	).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	query := `
         SELECT s.id, s.seller_id, u.username, s.total_amount, s.is_canceled, s.cancel_reason,
                TO_CHAR(s.created_at, 'DD.MM.YYYY HH24:MI') as created_at
@@ -126,11 +139,11 @@ func (r *SaleRepository) GetAll(ctx context.Context, companyID int) ([]domain.Sa
         LEFT JOIN users u ON s.seller_id = u.id
         WHERE s.company_id = $1
         ORDER BY s.id DESC
-        LIMIT 200`
+        LIMIT $2 OFFSET $3`
 
-	rows, err := r.db.Query(ctx, query, companyID)
+	rows, err := r.db.Query(ctx, query, companyID, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -143,12 +156,15 @@ func (r *SaleRepository) GetAll(ctx context.Context, companyID int) ([]domain.Sa
 			&s.IsCanceled, &s.CancelReason, &s.CreatedAt,
 		)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		sales = append(sales, s)
 	}
+	if sales == nil {
+		sales = []domain.Sale{}
+	}
 
-	return sales, rows.Err()
+	return sales, total, rows.Err()
 }
 
 // CancelSale — отменяет чек строго внутри своей компании.

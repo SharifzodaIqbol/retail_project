@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"os"
 	"retail-managment-system/internal/auth"
@@ -23,6 +22,7 @@ func (h *Handler) register(c *gin.Context) {
 
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
+		logErr(c, err, "Регистрация: ошибка хэширования пароля")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка шифрования"})
 		return
 	}
@@ -36,6 +36,8 @@ func (h *Handler) register(c *gin.Context) {
 		// Проверяем тип ошибки — если это фрод, возвращаем 409
 		var trialErr *repository.TrialNotAllowedError
 		if errors.As(err, &trialErr) {
+			logWarn(c, "Регистрация отклонена: повторное использование пробного периода",
+				"reason", trialErr.Reason, "username", req.Username, "device_id", req.DeviceID)
 			c.JSON(http.StatusConflict, gin.H{
 				"error":  "trial_not_allowed",
 				"reason": trialErr.Reason,
@@ -44,6 +46,7 @@ func (h *Handler) register(c *gin.Context) {
 			})
 			return
 		}
+		logErr(c, err, "Ошибка регистрации компании", "username", req.Username)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Логин занят или ошибка БД"})
 		return
 	}
@@ -85,6 +88,7 @@ func (h *Handler) login(c *gin.Context) {
 	if err != nil || !auth.CheckPasswordHash(req.Password, user.PasswordHash) {
 		h.loginLimiter.RecordFailure(userKey)
 		h.loginIPLimiter.RecordFailure(ipKey)
+		logWarn(c, "Неудачная попытка входа", "username", req.Username, "ip", ip)
 		c.JSON(401, gin.H{"error": "Неверный логин или пароль"})
 		return
 	}
@@ -92,7 +96,7 @@ func (h *Handler) login(c *gin.Context) {
 
 	token, errToken := auth.GenerateToken(user.ID, user.CompanyID, user.Role, os.Getenv("JWT_SECRET"))
 	if errToken != nil {
-		log.Println("Ошибка генерации JWT токена:", errToken)
+		logErr(c, errToken, "Ошибка генерации JWT токена при логине", "user_id", user.ID, "company_id", user.CompanyID)
 		c.JSON(500, gin.H{"error": "Ошибка сервера при создании сессии"})
 		return
 	}

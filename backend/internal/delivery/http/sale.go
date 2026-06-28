@@ -2,7 +2,7 @@ package http
 
 import (
 	"context"
-	"log"
+	"net/http"
 	"retail-managment-system/internal/domain"
 	"strconv"
 
@@ -15,15 +15,15 @@ func (h *Handler) executeSale(c *gin.Context) {
 		Total float64           `json:"total_amount"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		log.Println(err)
+		logWarn(c, "Оформление продажи: неверный формат запроса", "error", err.Error())
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 	companyID := c.MustGet("company_id").(int)
 	sellerID := c.MustGet("user_id").(int)
 	saleID, lowStockItems, err := h.saleRepo.ExecuteSale(context.Background(), companyID, sellerID, input.Items, input.Total)
-	log.Println(err)
 	if err != nil {
+		logErr(c, err, "Ошибка оформления продажи", "company_id", companyID, "seller_id", sellerID, "items_count", len(input.Items), "total", input.Total)
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
@@ -40,12 +40,21 @@ func (h *Handler) executeSale(c *gin.Context) {
 	c.JSON(200, gin.H{"id": saleID})
 }
 
-// getSalesHistory — ИСПРАВЛЕНО: раньше возвращалась история ВСЕХ компаний
-// без какой-либо фильтрации. Теперь строго по company_id текущего владельца.
+// getSalesHistory — GET /api/sales?page=1&limit=50
+// Возвращает страницу истории продаж. Параметры: page (с 1), limit (макс. 200).
 func (h *Handler) getSalesHistory(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
-	history, _ := h.saleRepo.GetAll(context.Background(), companyID)
-	c.JSON(200, history)
+
+	page, limit := parsePagination(c, 50, 200)
+	offset := (page - 1) * limit
+
+	history, total, err := h.saleRepo.GetAll(context.Background(), companyID, limit, offset)
+	if err != nil {
+		logErr(c, err, "Ошибка получения истории продаж", "company_id", companyID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения истории продаж"})
+		return
+	}
+	c.JSON(http.StatusOK, buildPage(history, total, page, limit))
 }
 
 // cancelSale — ИСПРАВЛЕНО: раньше чек искался и отменялся по глобальному id
@@ -59,20 +68,20 @@ func (h *Handler) cancelSale(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
+		logWarn(c, "Отмена продажи: неверный формат запроса", "sale_id", id, "error", err.Error())
 		c.JSON(400, gin.H{"error": "Неверный формат данных"})
 		return
 	}
-	log.Printf("[DEBUG] Начинаем отмену чека ID: %v (company_id=%v)", id, companyID)
 
 	totalAmount, err := h.saleRepo.GetSaleTotal(context.Background(), companyID, id)
 	if err != nil {
-		log.Printf("[ERROR]: %v", err)
+		logWarn(c, "Отмена продажи: чек не найден", "sale_id", id, "company_id", companyID, "error", err.Error())
 		c.JSON(404, gin.H{"error": "Чек не найден"})
 		return
 	}
 
 	if err = h.saleRepo.CancelSale(context.Background(), companyID, id, input.Reason); err != nil {
-		log.Printf("[ERROR]: %v", err)
+		logErr(c, err, "Ошибка отмены продажи", "sale_id", id, "company_id", companyID, "reason", input.Reason)
 		c.JSON(500, gin.H{"error": "Не удалось отменить чек: " + err.Error()})
 		return
 	}

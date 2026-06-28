@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"os"
 	"time"
 
 	"retail-managment-system/internal/delivery/http"
 	"retail-managment-system/internal/delivery/telegram"
+	"retail-managment-system/internal/logger"
 	"retail-managment-system/internal/repository"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,13 +17,16 @@ import (
 )
 
 func main() {
+	l := logger.Init()
+
 	if err := godotenv.Load(); err != nil {
-		log.Print("Файл .env не найден, используем переменные окружения")
+		l.Info("Файл .env не найден, используем переменные окружения")
 	}
 
 	dbPool, err := pgxpool.New(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
-		log.Fatalf("Ошибка подключения к БД: %v\n", err)
+		l.Error("Ошибка подключения к БД", "error", err.Error())
+		os.Exit(1)
 	}
 	defer dbPool.Close()
 
@@ -34,11 +39,12 @@ func main() {
 
 	tgBot, err := telegram.NewBot(os.Getenv("TELEGRAM_APITOKEN"))
 	if err != nil {
-		log.Fatalf("Ошибка запуска бота: %v", err)
+		l.Error("Ошибка запуска Telegram-бота", "error", err.Error())
+		os.Exit(1)
 	}
 	go tgBot.Start(saleRepo, userRepo, productRepo, debtorRepo)
 
-	go startDailyReportScheduler(saleRepo, userRepo, tgBot)
+	go startDailyReportScheduler(saleRepo, userRepo, tgBot, l)
 
 	handler := http.NewHandler(productRepo, saleRepo, userRepo, companyRepo, shopRepo, debtorRepo, tgBot, dbPool)
 	router := handler.InitRoutes()
@@ -46,27 +52,25 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("Сервер запущен на порту %s", port)
-	router.Run(":" + port)
+	l.Info("Сервер запущен", "port", port)
+	if err := router.Run(":" + port); err != nil {
+		log.Fatalf("Сервер остановлен из-за ошибки: %v", err)
+	}
 }
-
-// startDailyReportScheduler — ИСПРАВЛЕНО: раньше использовался один общий
-// (несуществующий) "company_id" из пустого gin.Context{} — это паниковало бы
-// каждый день в 21:00 (MustGet на незаполненном контексте) и в любом случае
-// было неверно для многотенантной системы: у каждой компании своя выручка.
-// Теперь отчёт рассылается КАЖДОМУ владельцу отдельно, строго по его company_id.
-func startDailyReportScheduler(saleRepo *repository.SaleRepository, userRepo *repository.UserRepository, tgBot *telegram.Bot) {
-	log.Println("Планировщик отчетов запущен...")
+func startDailyReportScheduler(saleRepo *repository.SaleRepository, userRepo *repository.UserRepository, tgBot *telegram.Bot, l *slog.Logger) {
+	l.Info("Планировщик ежедневных отчётов запущен")
 	for {
 		now := time.Now()
 		if now.Hour() == 21 && now.Minute() == 0 {
 			owners, err := userRepo.GetAllOwnersWithTelegram(context.Background())
 			if err != nil {
-				log.Printf("[ERROR] Не удалось получить владельцев для отчёта: %v", err)
+				l.Error("Планировщик отчётов: не удалось получить владельцев", "error", err.Error())
 			} else {
 				for _, owner := range owners {
 					stats, err := saleRepo.GetTodayTotal(context.Background(), owner.CompanyID)
 					if err != nil {
+						l.Error("Планировщик отчётов: не удалось получить статистику за день",
+							"company_id", owner.CompanyID, "owner_id", owner.ID, "error", err.Error())
 						continue
 					}
 					tgBot.SendDailyReport(owner.TgChatID, stats.Total, stats.Count)

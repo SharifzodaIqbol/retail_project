@@ -22,13 +22,27 @@ func (r *ProductRepository) Create(ctx context.Context, p domain.Product) error 
 	return err
 }
 
-func (r *ProductRepository) GetAll(ctx context.Context, companyID int) ([]domain.Product, error) {
-	query := `SELECT id, name, barcode, buy_price, sell_price, stock, unit FROM products 
-              WHERE is_active = true AND company_id = $1 ORDER BY stock ASC`
-
-	rows, err := r.db.Query(ctx, query, companyID)
+// GetAll — возвращает страницу товаров с пагинацией.
+// limit  — количество записей на странице (рекомендуется 50).
+// offset — смещение (= (page-1) * limit).
+func (r *ProductRepository) GetAll(ctx context.Context, companyID int, limit, offset int) ([]domain.Product, int, error) {
+	// Общее количество товаров для вычисления total_pages на клиенте
+	var total int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM products WHERE is_active = true AND company_id = $1`,
+		companyID,
+	).Scan(&total)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+
+	query := `SELECT id, name, barcode, buy_price, sell_price, stock, unit FROM products 
+              WHERE is_active = true AND company_id = $1 ORDER BY stock ASC
+              LIMIT $2 OFFSET $3`
+
+	rows, err := r.db.Query(ctx, query, companyID, limit, offset)
+	if err != nil {
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -36,11 +50,14 @@ func (r *ProductRepository) GetAll(ctx context.Context, companyID int) ([]domain
 	for rows.Next() {
 		var p domain.Product
 		if err := rows.Scan(&p.ID, &p.Name, &p.Barcode, &p.BuyPrice, &p.SellPrice, &p.Stock, &p.Unit); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		products = append(products, p)
 	}
-	return products, nil
+	if products == nil {
+		products = []domain.Product{}
+	}
+	return products, total, nil
 }
 
 func (r *ProductRepository) GetByBarcode(ctx context.Context, companyID int, barcode string) (*domain.Product, error) {
@@ -145,7 +162,7 @@ func (r *ProductRepository) GetNameByID(ctx context.Context, id int, companyID i
 }
 
 // UpsertFromImport — создаёт товар или, если в компании уже есть товар с таким
-// барcодом, обновляет его (название/цены/остаток/единицу). Возвращает true,
+// баркодом, обновляет его (название/цены/остаток/единицу). Возвращает true,
 // если была операция INSERT (новый товар), и false, если был UPDATE.
 func (r *ProductRepository) UpsertFromImport(ctx context.Context, p domain.Product) (created bool, err error) {
 	query := `

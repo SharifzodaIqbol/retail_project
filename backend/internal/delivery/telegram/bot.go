@@ -3,7 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
-	"log"
+	"retail-managment-system/internal/logger"
 	"retail-managment-system/internal/repository"
 	"strings"
 	"time"
@@ -58,6 +58,7 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 			token := strings.TrimSpace(args[0])
 			user, err := userRepo.ClaimTgLinkToken(context.Background(), token, c.Chat().ID)
 			if err != nil {
+				logger.L.Warn("Telegram: не удалось привязать аккаунт по токену", "chat_id", c.Chat().ID, "error", err.Error())
 				return c.Send("❌ Агар шумо аз акаунтатон бромада бошед, метавонед аз замимаи мобилӣ тавассути тугмаи «Пайваст кардани Telegram» истифода баред.")
 			}
 			return c.Send(
@@ -85,6 +86,7 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		}
 		stats, err := saleRepo.GetTodayTotal(context.Background(), user.CompanyID)
 		if err != nil {
+			logger.L.Error("Telegram: ошибка получения выручки за день", "company_id", user.CompanyID, "error", err.Error())
 			return c.Send("❌ Хатогии маълумот")
 		}
 		msg := fmt.Sprintf("📈 **Даромади имруза:** **%.2f сомонӣ**", stats.Total)
@@ -99,6 +101,7 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		}
 		profit, err := saleRepo.GetDailyNetProfit(context.Background(), user.CompanyID)
 		if err != nil {
+			logger.L.Error("Telegram: ошибка расчёта чистой прибыли", "company_id", user.CompanyID, "error", err.Error())
 			return c.Send("❌ Хатогии ҳисобкунии фоида")
 		}
 		msg := fmt.Sprintf("💵 **Фоидаи соф имрӯз:**\n**%.2f сомонӣ**", profit)
@@ -113,7 +116,7 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		}
 		report, err := saleRepo.GetTopProducts(context.Background(), user.CompanyID, 5)
 		if err != nil {
-			log.Println(err)
+			logger.L.Error("Telegram: ошибка получения топа товаров", "company_id", user.CompanyID, "error", err.Error())
 			return c.Send("❌ Хато шуд барои дидани борҳои бисер харида шуда!")
 		}
 		return c.Send(report, telebot.ModeMarkdown)
@@ -127,6 +130,7 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		}
 		products, err := productRepo.GetLowStockProducts(context.Background(), user.CompanyID, 10)
 		if err != nil {
+			logger.L.Error("Telegram: ошибка получения товаров с низким остатком", "company_id", user.CompanyID, "error", err.Error())
 			return c.Send("❌ Хатогии базаи маълумот.")
 		}
 		if len(products) == 0 {
@@ -151,6 +155,7 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		}
 		debtors, err := debtorRepo.GetAllForTelegram(context.Background(), user.CompanyID)
 		if err != nil {
+			logger.L.Error("Telegram: ошибка получения списка должников", "company_id", user.CompanyID, "error", err.Error())
 			return c.Send("❌ Хатогии базаи маълумот.")
 		}
 		if len(debtors) == 0 {
@@ -184,23 +189,31 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 
 func (b *Bot) SendSaleNotification(chatID int64, saleID int, total float64) {
 	msg := fmt.Sprintf("💰 **Фурӯши нав!**\nЧек: №%d\nМаблағ **%.2f сомонӣ**", saleID, total)
-	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
+	if _, err := b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown); err != nil {
+		logger.L.Error("Telegram: не удалось отправить уведомление о продаже", "chat_id", chatID, "sale_id", saleID, "error", err.Error())
+	}
 }
 
 func (b *Bot) SendCancelNotification(chatID int64, saleID int, reason string, total float64) {
 	msg := fmt.Sprintf("⚠️ **БЕКОР КАРДАНИ ЧЕК!**\nЧек: №%d\nМаблағ: %.2f\nСабаб: %s", saleID, total, reason)
-	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
+	if _, err := b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown); err != nil {
+		logger.L.Error("Telegram: не удалось отправить уведомление об отмене чека", "chat_id", chatID, "sale_id", saleID, "error", err.Error())
+	}
 }
 
 func (b *Bot) SendDailyReport(chatID int64, totalDay float64, salesCount int) {
 	msg := fmt.Sprintf("📊 **Натиҷаи рӯз**\n💰 Фурӯш: **%.2f сомонӣ**\n🧾 Миқдори чекҳо: **%d**", totalDay, salesCount)
-	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
+	if _, err := b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown); err != nil {
+		logger.L.Error("Telegram: не удалось отправить ежедневный отчёт", "chat_id", chatID, "error", err.Error())
+	}
 }
 
 func (b *Bot) SendLowStockAlert(chatID int64, productName string, remainingStock float64, unit string) {
 	msg := fmt.Sprintf("⚠️ **ДИҚҚАТ: МАҲСУЛОТ КАМ МОНД!**\n\n📦 Маҳсулот: %s\n📉 Боқи монд: **%g** %s",
 		productName, remainingStock, unit)
-	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
+	if _, err := b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown); err != nil {
+		logger.L.Error("Telegram: не удалось отправить предупреждение о низком остатке", "chat_id", chatID, "product", productName, "error", err.Error())
+	}
 }
 
 // SendInventoryChangeNotification — уведомление владельцу, когда продавец
@@ -216,5 +229,7 @@ func (b *Bot) SendInventoryChangeNotification(chatID int64, sellerName, productN
 		"📦 **Тағйироти склад**\n👤 Фурушанда: %s\n🏷 Маҳсулот: %s\n🔢 Тағйирот: %s%g\n📝 Сабаб: %s",
 		sellerName, productName, sign, addStock, reason,
 	)
-	b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown)
+	if _, err := b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown); err != nil {
+		logger.L.Error("Telegram: не удалось отправить уведомление об изменении склада", "chat_id", chatID, "product", productName, "error", err.Error())
+	}
 }

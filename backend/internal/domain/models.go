@@ -103,10 +103,6 @@ type LoginRequest struct {
 }
 
 // PinLoginRequest — вход продавца через PIN в терминальном режиме.
-// CompanyID обязателен: раньше вход проверялся только по глобальному
-// user_id + PIN, без привязки к компании. Поскольку PIN всего 4 цифры,
-// это давало возможность подбора (10000 вариантов) против ЛЮБОГО
-// пользователя в системе, а не только своей компании.
 type PinLoginRequest struct {
 	UserID    int    `json:"user_id" binding:"required"`
 	CompanyID int    `json:"company_id" binding:"required"`
@@ -119,12 +115,11 @@ type SetPinRequest struct {
 }
 
 // CreateUserRequest — создание сотрудника.
-// Для seller'ов пароль не нужен — они входят только через PIN.
 type CreateUserRequest struct {
 	Username string `json:"username" binding:"required"`
-	Password string `json:"password"` // обязателен только для owner, для seller — пустой
+	Password string `json:"password"`
 	Role     string `json:"role" binding:"required"`
-	Pin      string `json:"pin"` // необязательный для seller, 4 цифры
+	Pin      string `json:"pin"`
 }
 
 // CreateShopRequest — создать новый магазин внутри компании
@@ -198,7 +193,7 @@ type DebtHistory struct {
 type CreateDebtorRequest struct {
 	FullName    string  `json:"full_name" binding:"required"`
 	Phone       string  `json:"phone"`
-	InitialDebt float64 `json:"initial_debt"` // начальная сумма долга (>0)
+	InitialDebt float64 `json:"initial_debt"`
 	Note        string  `json:"note"`
 }
 
@@ -207,4 +202,16 @@ type DebtOperationRequest struct {
 	Amount float64 `json:"amount" binding:"required,gt=0"`
 	Type   string  `json:"type"   binding:"required,oneof=take pay"`
 	Note   string  `json:"note"`
+}
+
+// ─── Пагинация ────────────────────────────────────────────────────────────────
+
+// PaginatedResponse — универсальный ответ с пагинацией.
+// Data содержит элементы текущей страницы ([]Product, []Sale, []Debtor и т.д.).
+type PaginatedResponse struct {
+	Data       interface{} `json:"data"`
+	Total      int         `json:"total"`       // всего записей
+	Page       int         `json:"page"`        // текущая страница (с 1)
+	Limit      int         `json:"limit"`       // размер страницы
+	TotalPages int         `json:"total_pages"` // всего страниц
 }

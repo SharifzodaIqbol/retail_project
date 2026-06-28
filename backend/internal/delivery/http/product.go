@@ -13,6 +13,38 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
+// parsePagination читает ?page=N&limit=M из query string.
+// defaultLimit — значение по умолчанию; maxLimit — потолок, чтобы клиент не мог запросить слишком много.
+func parsePagination(c *gin.Context, defaultLimit, maxLimit int) (page, limit int) {
+	page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ = strconv.Atoi(c.DefaultQuery("limit", strconv.Itoa(defaultLimit)))
+	if limit < 1 {
+		limit = defaultLimit
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	return
+}
+
+// buildPage оборачивает срез данных в стандартный paginatedResponse.
+func buildPage(data interface{}, total, page, limit int) gin.H {
+	totalPages := total / limit
+	if total%limit != 0 {
+		totalPages++
+	}
+	return gin.H{
+		"data":        data,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"total_pages": totalPages,
+	}
+}
+
 // normalizeUnit — приводит значение колонки "единица" из Excel к внутреннему
 // коду unit. Понимает русские обозначения (шт/штук/штука, кг/килограмм) и сами
 // внутренние коды pcs/kg. Если ячейка пустая — считаем, что это штуки (старое
@@ -48,12 +80,14 @@ func (h *Handler) importProducts(c *gin.Context) {
 
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
+		logWarn(c, "Импорт товаров: файл не передан", "error", err.Error())
 		c.JSON(400, gin.H{"error": "Файл не найден. Отправьте поле 'file' с Excel-файлом (.xlsx)"})
 		return
 	}
 
 	f, err := fileHeader.Open()
 	if err != nil {
+		logErr(c, err, "Импорт товаров: не удалось открыть загруженный файл", "filename", fileHeader.Filename)
 		c.JSON(400, gin.H{"error": "Не удалось открыть файл"})
 		return
 	}
@@ -61,6 +95,7 @@ func (h *Handler) importProducts(c *gin.Context) {
 
 	xl, err := excelize.OpenReader(f)
 	if err != nil {
+		logWarn(c, "Импорт товаров: не удалось разобрать Excel-файл", "filename", fileHeader.Filename, "error", err.Error())
 		c.JSON(400, gin.H{"error": "Не удалось прочитать Excel-файл. Поддерживается только формат .xlsx"})
 		return
 	}
@@ -74,6 +109,7 @@ func (h *Handler) importProducts(c *gin.Context) {
 
 	rows, err := xl.GetRows(sheet)
 	if err != nil {
+		logErr(c, err, "Импорт товаров: не удалось прочитать строки листа", "sheet", sheet)
 		c.JSON(400, gin.H{"error": "Не удалось прочитать строки файла"})
 		return
 	}
@@ -149,6 +185,7 @@ func (h *Handler) importProducts(c *gin.Context) {
 
 		created, err := h.productRepo.UpsertFromImport(ctx, p)
 		if err != nil {
+			logErr(c, err, "Импорт товаров: ошибка сохранения строки", "row", rowNum, "barcode", barcode)
 			result.Errors = append(result.Errors, domain.ProductImportError{Row: rowNum, Message: "Ошибка сохранения товара: " + err.Error()})
 			continue
 		}
@@ -168,16 +205,13 @@ func (h *Handler) getProductByBarcode(c *gin.Context) {
 
 	p, err := h.productRepo.GetByBarcode(context.Background(), companyID, barcode)
 	if err != nil {
+		logWarn(c, "Товар по штрихкоду не найден", "company_id", companyID, "barcode", barcode, "error", err.Error())
 		c.JSON(http.StatusNotFound, gin.H{"error": "Товар не найден"})
 		return
 	}
 	c.JSON(http.StatusOK, p)
 }
 
-// searchProducts — поиск по названию для автодополнения в кассе.
-// ИСПРАВЛЕНО: раньше читался параметр "name", а Flutter всегда шлёт "q" —
-// поэтому поиск по названию всегда возвращал пустой список.
-// Также добавлен фильтр по company_id (раньше товары не фильтровались по компании).
 func (h *Handler) searchProducts(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 	name := strings.TrimSpace(c.Query("q"))
@@ -188,20 +222,28 @@ func (h *Handler) searchProducts(c *gin.Context) {
 
 	products, err := h.productRepo.SearchByName(context.Background(), companyID, name)
 	if err != nil {
+		logErr(c, err, "Ошибка поиска товаров по названию", "company_id", companyID, "query", name)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка поиска"})
 		return
 	}
 	c.JSON(http.StatusOK, products)
 }
 
+// getAllProducts — GET /api/products?page=1&limit=50
+// Возвращает страницу товаров. Параметры: page (с 1), limit (макс. 200).
 func (h *Handler) getAllProducts(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
-	products, err := h.productRepo.GetAll(context.Background(), companyID)
+
+	page, limit := parsePagination(c, 50, 200)
+	offset := (page - 1) * limit
+
+	products, total, err := h.productRepo.GetAll(context.Background(), companyID, limit, offset)
 	if err != nil {
+		logErr(c, err, "Ошибка получения списка товаров", "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Ошибка получения товаров"})
 		return
 	}
-	c.JSON(200, products)
+	c.JSON(200, buildPage(products, total, page, limit))
 }
 func (h *Handler) createProduct(c *gin.Context) {
 	var p domain.Product
@@ -212,6 +254,7 @@ func (h *Handler) createProduct(c *gin.Context) {
 
 	unit, err := normalizeUnit(p.Unit)
 	if err != nil {
+		logWarn(c, "Создание товара: неверная единица измерения", "raw_unit", p.Unit, "error", err.Error())
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -219,15 +262,13 @@ func (h *Handler) createProduct(c *gin.Context) {
 
 	p.CompanyID = c.MustGet("company_id").(int)
 	if err := h.productRepo.Create(context.Background(), p); err != nil {
+		logErr(c, err, "Ошибка создания товара", "company_id", p.CompanyID, "barcode", p.Barcode)
 		c.JSON(500, gin.H{"error": "Ошибка создания товара"})
 		return
 	}
 	c.JSON(200, gin.H{"status": "ok"})
 }
 
-// updateInventory — обновление склада.
-// НОВОЕ: если изменение делает продавец (role == "seller"), причина обязательна.
-// Склад обновляется сразу, владельцу уходит Telegram-уведомление постфактум.
 func (h *Handler) updateInventory(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	role, _ := c.Get("role")
@@ -253,9 +294,11 @@ func (h *Handler) updateInventory(c *gin.Context) {
 
 	if err := h.productRepo.UpdateInventory(context.Background(), id, companyID, input.AddStock, input.SellPrice, input.BuyPrice); err != nil {
 		if err == repository.ErrNotFound {
+			logWarn(c, "Обновление склада: товар не найден", "product_id", id, "company_id", companyID)
 			c.JSON(404, gin.H{"error": "Товар не найден"})
 			return
 		}
+		logErr(c, err, "Ошибка обновления склада товара", "product_id", id, "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Не удалось обновить склад"})
 		return
 	}
@@ -289,9 +332,11 @@ func (h *Handler) deleteProduct(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	if err := h.productRepo.SoftDelete(context.Background(), id, companyID); err != nil {
 		if err == repository.ErrNotFound {
+			logWarn(c, "Удаление товара: товар не найден", "product_id", id, "company_id", companyID)
 			c.JSON(404, gin.H{"error": "Товар не найден"})
 			return
 		}
+		logErr(c, err, "Ошибка удаления товара", "product_id", id, "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Ошибка удаления"})
 		return
 	}
