@@ -159,23 +159,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Тасдиқи пардохт?'),
-        content: Text(
-          'Дар маҷмӯъ: ${cart.totalAmount.toStringAsFixed(2)} сомонӣ\n',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Бекор кардан'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Пардохт', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+      builder: (ctx) => _PaymentDialog(totalAmount: cart.totalAmount),
     );
 
     // После закрытия диалога оплаты возвращаем фокус
@@ -292,9 +276,10 @@ class _HomeScreenState extends State<HomeScreen> {
         content: TextField(
           controller: controller,
           autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          keyboardType: TextInputType.numberWithOptions(decimal: isKg),
           decoration: InputDecoration(
             labelText: isKg ? 'Миқдор (кг), масалан. 0.5' : 'Миқдор (дона)',
+            helperText: isKg ? null : 'Танҳо ададҳои бутун',
             border: const OutlineInputBorder(),
           ),
         ),
@@ -308,9 +293,9 @@ class _HomeScreenState extends State<HomeScreen> {
               final newQty = double.tryParse(
                 controller.text.replaceAll(',', '.'),
               );
-              if (newQty != null) {
-                cart.updateQuantity(item.product.id, newQty);
-              }
+              if (newQty == null || newQty <= 0) return;
+              if (!isKg && newQty != newQty.truncateToDouble()) return;
+              cart.updateQuantity(item.product.id, newQty);
               Navigator.pop(context);
             },
             child: const Text('Тайер'),
@@ -802,6 +787,204 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Диалог подтверждения оплаты.
+/// Позволяет ввести сумму, полученную от покупателя наличными,
+/// и автоматически показывает сдачу — без калькулятора.
+class _PaymentDialog extends StatefulWidget {
+  final double totalAmount;
+
+  const _PaymentDialog({required this.totalAmount});
+
+  @override
+  State<_PaymentDialog> createState() => _PaymentDialogState();
+}
+
+class _PaymentDialogState extends State<_PaymentDialog> {
+  final TextEditingController _receivedCtrl = TextEditingController();
+
+  static const List<int> _quickBills = [10, 20, 50, 100, 200, 500];
+
+  @override
+  void dispose() {
+    _receivedCtrl.dispose();
+    super.dispose();
+  }
+
+  double? get _received =>
+      double.tryParse(_receivedCtrl.text.trim().replaceAll(',', '.'));
+
+  double? get _change {
+    final r = _received;
+    if (r == null) return null;
+    final c = r - widget.totalAmount;
+    return c >= 0 ? c : null;
+  }
+
+  bool get _isInsufficient {
+    final r = _received;
+    return r != null && r < widget.totalAmount;
+  }
+
+  void _setReceived(double amount) {
+    setState(() {
+      _receivedCtrl.text = amount % 1 == 0
+          ? amount.toStringAsFixed(0)
+          : amount.toStringAsFixed(2);
+    });
+  }
+
+  void _addToReceived(int bill) {
+    final current = _received ?? 0;
+    _setReceived(current + bill);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Тасдиқи пардохт'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Дар маҷмӯъ',
+              style: TextStyle(color: Colors.grey, fontSize: 13),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '${widget.totalAmount.toStringAsFixed(2)} сомонӣ',
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF1A1A2E),
+              ),
+            ),
+            const SizedBox(height: 18),
+
+            const Text(
+              'Аз харидор гирифта шуд (нақд)',
+              style: TextStyle(color: Colors.grey, fontSize: 13),
+            ),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _receivedCtrl,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              onChanged: (_) => setState(() {}),
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+              decoration: InputDecoration(
+                hintText: '0.00',
+                errorText: _isInsufficient
+                    ? 'Маблағ аз чек камтар аст'
+                    : null,
+                suffixIcon: _receivedCtrl.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () =>
+                            setState(() => _receivedCtrl.clear()),
+                      )
+                    : null,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Быстрые номиналы
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _quickBills
+                  .map(
+                    (bill) => OutlinedButton(
+                      onPressed: () => _addToReceived(bill),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: Text('+$bill'),
+                    ),
+                  )
+                  .toList(),
+            ),
+
+            const SizedBox(height: 18),
+
+            // Карточка сдачи / подсказка
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+              decoration: BoxDecoration(
+                color: _change != null
+                    ? Colors.green.shade50
+                    : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Бозгашт',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: _change != null
+                          ? Colors.green.shade700
+                          : Colors.grey,
+                    ),
+                  ),
+                  Text(
+                    _change != null
+                        ? '${_change!.toStringAsFixed(2)} сомонӣ'
+                        : '— сомонӣ',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: _change != null
+                          ? Colors.green.shade700
+                          : Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Бекор кардан'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+          onPressed: _isInsufficient
+              ? null
+              : () => Navigator.pop(context, true),
+          child: const Text(
+            'Пардохт',
+            style: TextStyle(color: Colors.white),
+          ),
+        ),
+      ],
     );
   }
 }

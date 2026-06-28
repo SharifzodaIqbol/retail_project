@@ -10,34 +10,69 @@ class AddProductScreen extends StatefulWidget {
 class _AddProductScreenState extends State<AddProductScreen> {
   final _formKey = GlobalKey<FormState>();
   final _apiService = ApiService();
+  bool _loading = false;
 
-  // Контроллеры для полей
   final _nameController = TextEditingController();
   final _barcodeController = TextEditingController();
   final _buyPriceController = TextEditingController();
   final _sellPriceController = TextEditingController();
   final _stockController = TextEditingController();
 
-  // Единица измерения: 'pcs' (шт) или 'kg' (кг)
   String _unit = 'pcs';
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _barcodeController.dispose();
+    _buyPriceController.dispose();
+    _sellPriceController.dispose();
+    _stockController.dispose();
+    super.dispose();
+  }
+
+  /// Нормализует ввод: заменяет запятую на точку и убирает пробелы.
+  double? _parseNumber(String raw) =>
+      double.tryParse(raw.trim().replaceAll(',', '.'));
 
   void _submitData() async {
     if (!_formKey.currentState!.validate()) return;
 
+    final buyPrice = _parseNumber(_buyPriceController.text)!;
+    final sellPrice = _parseNumber(_sellPriceController.text)!;
+    final stock = _parseNumber(_stockController.text)!;
+
+    // Дополнительная межполевая проверка
+    if (sellPrice < buyPrice) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Нархи фурӯш аз нархи харид камтар буда наметавонад!',
+          ),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _loading = true);
+
     final productData = {
-      "name": _nameController.text,
-      "barcode": _barcodeController.text,
-      "buy_price": double.parse(_buyPriceController.text),
-      "sell_price": double.parse(_sellPriceController.text),
-      // Остаток теперь double — для "кг" допускаются дробные значения (например, 2.5)
-      "stock": double.parse(_stockController.text.replaceAll(',', '.')),
+      "name": _nameController.text.trim(),
+      "barcode": _barcodeController.text.trim(),
+      "buy_price": buyPrice,
+      "sell_price": sellPrice,
+      "stock": stock,
       "unit": _unit,
     };
 
-    final success = await _apiService.addProduct(productData);
+    final error = await _apiService.addProduct(productData);
 
-    if (success) {
-      Navigator.pop(context); // Возвращаемся назад
+    if (!mounted) return;
+    setState(() => _loading = false);
+
+    if (error == null) {
+      Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Маҳсулот бо муваффақият илова карда шуд!'),
@@ -45,16 +80,28 @@ class _AddProductScreenState extends State<AddProductScreen> {
         ),
       );
     } else {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Хатогӣ ҳангоми насб')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
     }
+  }
+
+  String? _validatePrice(String? v, String label) {
+    if (v == null || v.trim().isEmpty) return '$label ворид кунед';
+    final parsed = _parseNumber(v);
+    if (parsed == null) return 'Рақами нодуруст (масалан: 12.50)';
+    if (parsed < 0) return '$label манфӣ буда наметавонад';
+    return null;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Маҳсулот нав')),
+      appBar: AppBar(title: const Text('Маҳсулоти нав')),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Form(
@@ -64,8 +111,14 @@ class _AddProductScreenState extends State<AddProductScreen> {
               TextFormField(
                 controller: _nameController,
                 decoration: const InputDecoration(labelText: 'Номи маҳсулот'),
-                validator: (v) => v!.isEmpty ? 'Номро нависед' : null,
+                textCapitalization: TextCapitalization.sentences,
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return 'Номро нависед';
+                  if (v.trim().length < 2) return 'Ном хеле кӯтоҳ аст';
+                  return null;
+                },
               ),
+              const SizedBox(height: 12),
               TextFormField(
                 controller: _barcodeController,
                 decoration: InputDecoration(
@@ -81,43 +134,62 @@ class _AddProductScreenState extends State<AddProductScreen> {
                         ),
                       );
                       if (scannedCode != null) {
-                        setState(() {
-                          _barcodeController.text = scannedCode;
-                        });
+                        setState(() => _barcodeController.text = scannedCode);
                       }
                     },
                   ),
                 ),
-                validator: (v) =>
-                    v!.isEmpty ? 'Скан кунед ё кодро дохил кунед' : null,
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) {
+                    return 'Скан кунед ё кодро дохил кунед';
+                  }
+                  return null;
+                },
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
                     child: TextFormField(
                       controller: _buyPriceController,
                       decoration: const InputDecoration(
                         labelText: 'Нархи харид',
+                        hintText: '0.00',
                       ),
-                      keyboardType: TextInputType.number,
-                      validator: (v) => v!.isEmpty ? '?' : null,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      onChanged: (_) => setState(() {}), // обновить sell validator
+                      validator: (v) => _validatePrice(v, 'Нархи харид'),
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: TextFormField(
                       controller: _sellPriceController,
                       decoration: const InputDecoration(
                         labelText: 'Нархи фурӯш',
+                        hintText: '0.00',
                       ),
-                      keyboardType: TextInputType.number,
-                      validator: (v) => v!.isEmpty ? '?' : null,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      validator: (v) {
+                        final baseError = _validatePrice(v, 'Нархи фурӯш');
+                        if (baseError != null) return baseError;
+                        final sell = _parseNumber(v!)!;
+                        final buy = _parseNumber(_buyPriceController.text);
+                        if (buy != null && sell < buy) {
+                          return 'Нархи фурӯш аз нархи харид (${buy.toStringAsFixed(2)}) кам аст';
+                        }
+                        return null;
+                      },
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -127,24 +199,33 @@ class _AddProductScreenState extends State<AddProductScreen> {
                       controller: _stockController,
                       decoration: InputDecoration(
                         labelText: 'Миқдор',
+                        hintText: _unit == 'kg' ? '0.000' : '0',
                         helperText: _unit == 'kg'
-                            ? 'Шумо метавонед адади касри дохил кунед, масалан 2.5'
+                            ? 'Адади касрӣ иҷозат дода мешавад, мас: 2.5'
                             : null,
                       ),
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
                       validator: (v) {
-                        print(v);
-                        if (v == null || v.isEmpty)
-                          return 'Бақияро ворид кунед';
-                        final parsed = double.tryParse(v.replaceAll(',', '.'));
-                        if (parsed == null) return 'Рақами нодуруст';
+                        if (v == null || v.trim().isEmpty) {
+                          return 'Миқдорро ворид кунед';
+                        }
+                        final parsed = _parseNumber(v);
+                        if (parsed == null) {
+                          return 'Рақами нодуруст (мас: 10 ё 2.5)';
+                        }
+                        if (parsed < 0) {
+                          return 'Миқдор манфӣ буда наметавонад';
+                        }
+                        if (_unit == 'pcs' && parsed != parsed.truncateToDouble()) {
+                          return 'Барои "дона" танҳо ададҳои бутун';
+                        }
                         return null;
                       },
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 12),
                   Expanded(
                     flex: 1,
                     child: DropdownButtonFormField<String>(
@@ -163,15 +244,24 @@ class _AddProductScreenState extends State<AddProductScreen> {
               ),
               const SizedBox(height: 30),
               ElevatedButton(
-                onPressed: _submitData,
+                onPressed: _loading ? null : _submitData,
                 style: ElevatedButton.styleFrom(
                   minimumSize: const Size.fromHeight(50),
                   backgroundColor: Colors.blue,
                 ),
-                child: const Text(
-                  'Насб',
-                  style: TextStyle(color: Colors.white),
-                ),
+                child: _loading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Text(
+                        'Илова кардан',
+                        style: TextStyle(color: Colors.white, fontSize: 16),
+                      ),
               ),
             ],
           ),

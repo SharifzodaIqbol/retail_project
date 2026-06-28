@@ -16,24 +16,39 @@ class _InventoryScreenState extends State<InventoryScreen>
   final _api = ApiService();
   final _authService = AuthService();
   final _searchCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
 
-  List<Product> _allProducts = [];
-  List<Product> _filtered = [];
+  // ── Ошибки диалога пополнения ──
+  String? _amountError;
+  String? _buyError;
+  String? _sellError;
+  String? _reasonError;
+  bool _saving = false;
+
+  // ── Данные ──
+  List<Product> _products = [];
   bool _loading = true;
+  bool _loadingMore = false;
+  int _page = 1;
+  int _totalPages = 1;
+  static const int _limit = 50;
+
   String _role = '';
+  String _searchQuery = '';
 
   @override
   Stream<void> get refreshStream =>
       DataRefreshService.instance.onProductChanged;
 
   @override
-  Future<void> loadData() => _loadProducts();
+  Future<void> loadData() => _loadProducts(reset: true);
 
   @override
   void initState() {
     super.initState();
     _loadRole();
-    _searchCtrl.addListener(_filter);
+    _searchCtrl.addListener(_onSearchChanged);
+    _scrollCtrl.addListener(_onScroll);
   }
 
   Future<void> _loadRole() async {
@@ -44,28 +59,69 @@ class _InventoryScreenState extends State<InventoryScreen>
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _loadProducts() async {
-    setState(() => _loading = true);
-    final products = await _api.getAllProducts();
+  // Загружает страницу товаров.
+  // reset=true — начать с первой страницы (pull-to-refresh или первый запуск).
+  Future<void> _loadProducts({bool reset = false}) async {
+    if (reset) {
+      setState(() {
+        _loading = true;
+        _page = 1;
+        _products = [];
+      });
+    } else {
+      if (_loadingMore || _page >= _totalPages) return;
+      setState(() => _loadingMore = true);
+    }
+
+    final result = await _api.getProducts(page: _page, limit: _limit);
+
+    if (!mounted) return;
     setState(() {
-      _allProducts = products;
-      _filtered = products;
+      _products.addAll(result.data);
+      _totalPages = result.totalPages;
       _loading = false;
+      _loadingMore = false;
+      if (result.hasNextPage) _page++;
     });
   }
 
-  void _filter() {
-    final q = _searchCtrl.text.toLowerCase();
-    setState(() {
-      _filtered = _allProducts
-          .where(
-            (p) => p.name.toLowerCase().contains(q) || p.barcode.contains(q),
-          )
-          .toList();
-    });
+  // При скролле к концу списка — подгружаем следующую страницу.
+  void _onScroll() {
+    if (_scrollCtrl.position.pixels >=
+        _scrollCtrl.position.maxScrollExtent - 200) {
+      _loadProducts();
+    }
+  }
+
+  void _onSearchChanged() {
+    setState(() => _searchQuery = _searchCtrl.text.toLowerCase());
+  }
+
+  // Локальная фильтрация уже загруженных данных.
+  // При пустом запросе показываем всё, иначе фильтруем по имени/штрихкоду.
+  List<Product> get _filtered {
+    if (_searchQuery.isEmpty) return _products;
+    return _products
+        .where(
+          (p) =>
+              p.name.toLowerCase().contains(_searchQuery) ||
+              p.barcode.contains(_searchQuery),
+        )
+        .toList();
+  }
+
+  double? _parseNum(String raw) =>
+      double.tryParse(raw.trim().replaceAll(',', '.'));
+
+  void _clearErrors() {
+    _amountError = null;
+    _buyError = null;
+    _sellError = null;
+    _reasonError = null;
   }
 
   void _showRestockDialog(Product product) {
@@ -79,6 +135,9 @@ class _InventoryScreenState extends State<InventoryScreen>
     );
     final isSeller = _role == 'seller';
 
+    _clearErrors();
+    _saving = false;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -88,7 +147,6 @@ class _InventoryScreenState extends State<InventoryScreen>
       ),
       builder: (context) => StatefulBuilder(
         builder: (context, setSheetState) {
-          String? reasonError;
           return Padding(
             padding: EdgeInsets.only(
               left: 20,
@@ -117,22 +175,39 @@ class _InventoryScreenState extends State<InventoryScreen>
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
+                  onChanged: (_) {
+                    _amountError = null;
+                    setSheetState(() {});
+                  },
                   decoration: InputDecoration(
-                    labelText: 'Илова кардан (${product.unitLabel})',
-                    prefixIcon: Icon(Icons.add_box),
-                    border: OutlineInputBorder(),
+                    labelText:
+                        'Илова кардан (${product.unitLabel}) — 0 барои тағир надодан',
+                    prefixIcon: const Icon(Icons.add_box),
+                    border: const OutlineInputBorder(),
+                    errorText: _amountError,
+                    helperText: product.unit == 'kg'
+                        ? 'Адади касрӣ иҷозат дода мешавад, мас: 2.5'
+                        : null,
                   ),
                 ),
                 const SizedBox(height: 12),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: TextField(
                         controller: buyCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        onChanged: (_) {
+                          _buyError = null;
+                          setSheetState(() {});
+                        },
+                        decoration: InputDecoration(
                           labelText: 'Нархи харид',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
+                          errorText: _buyError,
                         ),
                       ),
                     ),
@@ -140,10 +215,17 @@ class _InventoryScreenState extends State<InventoryScreen>
                     Expanded(
                       child: TextField(
                         controller: sellCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        onChanged: (_) {
+                          _sellError = null;
+                          setSheetState(() {});
+                        },
+                        decoration: InputDecoration(
                           labelText: 'Нархи фурӯш',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
+                          errorText: _sellError,
                         ),
                       ),
                     ),
@@ -154,18 +236,21 @@ class _InventoryScreenState extends State<InventoryScreen>
                   TextField(
                     controller: reasonCtrl,
                     maxLines: 2,
+                    onChanged: (_) {
+                      _reasonError = null;
+                      setSheetState(() {});
+                    },
                     decoration: InputDecoration(
-                      labelText: 'Сабаби тағиребии анбор',
-                      hintText:
-                          'Мисол: илова кардани маҳсулот, дигар сабабҳо...',
+                      labelText: 'Сабаби тағирёбии анбор',
+                      hintText: 'Мисол: илова кардани маҳсулот...',
                       prefixIcon: const Icon(Icons.edit_note),
                       border: const OutlineInputBorder(),
-                      errorText: reasonError,
+                      errorText: _reasonError,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Соҳибкор аз тағирот огоҳӣ мейобад.',
+                    'Соҳибкор аз тағирот огоҳӣ мегирад.',
                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                   ),
                 ],
@@ -180,56 +265,108 @@ class _InventoryScreenState extends State<InventoryScreen>
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    onPressed: () async {
-                      if (isSeller && reasonCtrl.text.trim().isEmpty) {
-                        setSheetState(
-                          () => reasonError = 'Сабаби тағиротро нависед.',
-                        );
-                        return;
-                      }
+                    onPressed: _saving
+                        ? null
+                        : () async {
+                            bool hasError = false;
+                            _clearErrors();
 
-                      final amount =
-                          double.tryParse(
-                            amountCtrl.text.replaceAll(',', '.'),
-                          ) ??
-                          0;
-                      final sell = double.tryParse(sellCtrl.text) ?? 0;
-                      final buy = double.tryParse(buyCtrl.text) ?? 0;
+                            final amount = _parseNum(
+                              amountCtrl.text.isEmpty ? '0' : amountCtrl.text,
+                            );
+                            if (amount == null) {
+                              _amountError = 'Рақами нодуруст (мас: 10 ё 2.5)';
+                              hasError = true;
+                            } else if (amount < 0) {
+                              _amountError = 'Миқдор манфӣ буда наметавонад';
+                              hasError = true;
+                            } else if (product.unit == 'pcs' &&
+                                amount > 0 &&
+                                amount != amount.truncateToDouble()) {
+                              _amountError = 'Барои "дона" танҳо ададҳои бутун';
+                              hasError = true;
+                            }
 
-                      final ok = await _api.updateInventory(
-                        product.id,
-                        amount,
-                        sell,
-                        buy,
-                        reason: isSeller ? reasonCtrl.text.trim() : null,
-                      );
+                            final buy = _parseNum(buyCtrl.text);
+                            if (buy == null) {
+                              _buyError = 'Нархи харидро дуруст ворид кунед';
+                              hasError = true;
+                            } else if (buy < 0) {
+                              _buyError = 'Нарх манфӣ буда наметавонад';
+                              hasError = true;
+                            }
 
-                      if (ok && mounted) {
-                        Navigator.pop(context);
-                        _loadProducts();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              isSeller
-                                  ? 'Анбор тағир ёфт! Соҳибкор огоҳ карда шудааст.'
-                                  : 'Анбор тағир ёфт!',
+                            final sell = _parseNum(sellCtrl.text);
+                            if (sell == null) {
+                              _sellError = 'Нархи фурӯшро дуруст ворид кунед';
+                              hasError = true;
+                            } else if (sell < 0) {
+                              _sellError = 'Нарх манфӣ буда наметавонад';
+                              hasError = true;
+                            } else if (buy != null && sell < buy) {
+                              _sellError =
+                                  'Нархи фурӯш аз нархи харид (${buy.toStringAsFixed(2)}) кам аст';
+                              hasError = true;
+                            }
+
+                            if (isSeller && reasonCtrl.text.trim().isEmpty) {
+                              _reasonError = 'Сабаби тағиротро нависед';
+                              hasError = true;
+                            }
+
+                            setSheetState(() {});
+                            if (hasError) return;
+
+                            setSheetState(() => _saving = true);
+
+                            final ok = await _api.updateInventory(
+                              product.id,
+                              amount!,
+                              sell!,
+                              buy!,
+                              reason: isSeller ? reasonCtrl.text.trim() : null,
+                            );
+
+                            if (!mounted) return;
+                            setSheetState(() => _saving = false);
+
+                            if (ok) {
+                              Navigator.pop(context);
+                              _loadProducts(reset: true);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    isSeller
+                                        ? 'Анбор тағир ёфт! Соҳибкор огоҳ карда шудааст.'
+                                        : 'Анбор тағир ёфт!',
+                                  ),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Тағири анбор муяссар нашуд. Пайвастшавиро санҷед.',
+                                  ),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          },
+                    child: _saving
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
                             ),
-                            backgroundColor: Colors.green,
+                          )
+                        : const Text(
+                            'Захира кардан',
+                            style: TextStyle(color: Colors.white, fontSize: 16),
                           ),
-                        );
-                      } else if (!ok && mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Тағири анбор муяссар нашуд.'),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                      }
-                    },
-                    child: const Text(
-                      'Насб',
-                      style: TextStyle(color: Colors.white, fontSize: 16),
-                    ),
                   ),
                 ),
               ],
@@ -252,14 +389,17 @@ class _InventoryScreenState extends State<InventoryScreen>
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
         title: const Text(
-          'Склад',
+          'Анбор',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black87,
         elevation: 0,
         actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadProducts),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => _loadProducts(reset: true),
+          ),
         ],
       ),
       body: Column(
@@ -278,7 +418,6 @@ class _InventoryScreenState extends State<InventoryScreen>
                         icon: const Icon(Icons.clear),
                         onPressed: () {
                           _searchCtrl.clear();
-                          _filter();
                         },
                       )
                     : null,
@@ -297,15 +436,30 @@ class _InventoryScreenState extends State<InventoryScreen>
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : RefreshIndicator(
-                    onRefresh: _loadProducts,
+                    onRefresh: () => _loadProducts(reset: true),
                     child: _filtered.isEmpty
                         ? const Center(child: Text('Ягон чиз ёфт нашуд'))
                         : ListView.separated(
+                            controller: _scrollCtrl,
                             padding: const EdgeInsets.all(16),
-                            itemCount: _filtered.length,
+                            // +1 для индикатора загрузки в конце
+                            itemCount:
+                                _filtered.length + (_loadingMore ? 1 : 0),
                             separatorBuilder: (_, __) =>
                                 const SizedBox(height: 8),
                             itemBuilder: (context, i) {
+                              // Индикатор подгрузки следующей страницы
+                              if (i == _filtered.length) {
+                                return const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 16),
+                                  child: Center(
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                );
+                              }
+
                               final p = _filtered[i];
                               final stockColor = _stockColor(p.stock);
                               final margin = p.sellPrice > 0 && p.buyPrice > 0

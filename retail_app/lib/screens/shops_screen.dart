@@ -38,19 +38,19 @@ class _ShopsScreenState extends State<ShopsScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text(isEdit ? 'Переименовать магазин' : 'Новый магазин'),
+        title: Text(isEdit ? 'Номи мағозаро иваз кардан' : 'Мағозаи нав'),
         content: TextField(
           controller: nameCtrl,
           autofocus: true,
           decoration: const InputDecoration(
-            labelText: 'Название магазина',
+            labelText: 'Номи мағоза',
             border: OutlineInputBorder(),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -68,7 +68,7 @@ class _ShopsScreenState extends State<ShopsScreen> {
               backgroundColor: const Color(0xFF4F6EF7),
             ),
             child: Text(
-              isEdit ? 'Сохранить' : 'Создать',
+              isEdit ? 'Насб' : 'Сохтан',
               style: const TextStyle(color: Colors.white),
             ),
           ),
@@ -81,19 +81,22 @@ class _ShopsScreenState extends State<ShopsScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Удалить магазин?'),
+        title: const Text('Мағозаро нест мекунед?'),
         content: Text(
-          '«${shop['name']}» будет удалён. Продавцы магазина останутся в компании.',
+          '«${shop['name']}» нест карда мешавад. Фурӯшандагони мағоза дар ширкат мемонанд.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Удалить', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Тоза кардан',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -110,7 +113,7 @@ class _ShopsScreenState extends State<ShopsScreen> {
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
         title: const Text(
-          'Мои магазины',
+          'Мағозаҳои ман',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
         backgroundColor: Colors.white,
@@ -125,7 +128,7 @@ class _ShopsScreenState extends State<ShopsScreen> {
         backgroundColor: const Color(0xFF4F6EF7),
         icon: const Icon(Icons.add_business, color: Colors.white),
         label: const Text(
-          'Добавить магазин',
+          'Илова кардани мағоза',
           style: TextStyle(color: Colors.white),
         ),
       ),
@@ -145,12 +148,12 @@ class _ShopsScreenState extends State<ShopsScreen> {
                           ),
                           const SizedBox(height: 16),
                           const Text(
-                            'Нет магазинов',
+                            'Мағоза нест',
                             style: TextStyle(fontSize: 18, color: Colors.grey),
                           ),
                           const SizedBox(height: 8),
                           const Text(
-                            'Создайте первый магазин',
+                            'Мағозаи аввал созед',
                             style: TextStyle(color: Colors.grey),
                           ),
                         ],
@@ -211,12 +214,12 @@ class _ShopsScreenState extends State<ShopsScreen> {
                               itemBuilder: (_) => [
                                 const PopupMenuItem(
                                   value: 'edit',
-                                  child: Text('Переименовать'),
+                                  child: Text('Тағйири ном'),
                                 ),
                                 const PopupMenuItem(
                                   value: 'delete',
                                   child: Text(
-                                    'Удалить',
+                                    'Нест кардан',
                                     style: TextStyle(color: Colors.red),
                                   ),
                                 ),

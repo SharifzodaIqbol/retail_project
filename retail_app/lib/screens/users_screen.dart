@@ -39,14 +39,14 @@ class _UsersScreenState extends State<UsersScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Новый сотрудник'),
+          title: const Text('Коргари нав'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: usernameCtrl,
                 decoration: const InputDecoration(
-                  labelText: 'Имя сотрудника',
+                  labelText: 'Номи коргар',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -58,20 +58,20 @@ class _UsersScreenState extends State<UsersScreen> {
                 maxLength: 4,
                 obscureText: true,
                 decoration: const InputDecoration(
-                  labelText: 'PIN-код (4 цифры)',
+                  labelText: 'PIN-код (4 рақам)',
                   border: OutlineInputBorder(),
-                  helperText: 'Продавец будет входить через PIN',
+                  helperText: 'Фурӯшанда тавассути PIN ворид мешавад',
                 ),
               ),
               const SizedBox(height: 4),
               DropdownButtonFormField<String>(
                 value: role,
                 decoration: const InputDecoration(
-                  labelText: 'Роль',
+                  labelText: 'Вазифа',
                   border: OutlineInputBorder(),
                 ),
                 items: const [
-                  DropdownMenuItem(value: 'seller', child: Text('Продавец')),
+                  DropdownMenuItem(value: 'seller', child: Text('Фурӯшанда')),
                 ],
                 onChanged: (v) => setDialogState(() => role = v!),
               ),
@@ -80,14 +80,14 @@ class _UsersScreenState extends State<UsersScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Отмена'),
+              child: const Text('Бекор кардан'),
             ),
             ElevatedButton(
               onPressed: () async {
                 if (usernameCtrl.text.isEmpty) return;
                 if (pinCtrl.text.length != 4) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('PIN должен быть 4 цифры')),
+                    const SnackBar(content: Text('PIN бояд 4 рақам бошад')),
                   );
                   return;
                 }
@@ -103,14 +103,16 @@ class _UsersScreenState extends State<UsersScreen> {
                   _loadUsers();
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Сотрудник добавлен!'),
+                      content: Text('Корманд илова карда шуд!'),
                       backgroundColor: Colors.green,
                     ),
                   );
                 } else if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Ошибка. Возможно, имя уже занято.'),
+                      content: Text(
+                        'Хато. Шояд ном аллакай гирифта шудааст. Шумо метавонед дигар ном истифода баред.',
+                      ),
                       backgroundColor: Colors.red,
                     ),
                   );
@@ -120,7 +122,7 @@ class _UsersScreenState extends State<UsersScreen> {
                 backgroundColor: const Color(0xFF4F6EF7),
               ),
               child: const Text(
-                'Создать',
+                'Сохтан',
                 style: TextStyle(color: Colors.white),
               ),
             ),
@@ -134,18 +136,20 @@ class _UsersScreenState extends State<UsersScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Удалить сотрудника?'),
-        content: Text('Пользователь "$username" будет удалён.'),
+        title: const Text('Кормандро хориҷ мекунед?'),
+        content: Text('Корманд "$username" хориҷ карда мешавад..'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
+            child: const Text('Бекор кардан'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(context, true),
-            child:
-                const Text('Удалить', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Тоза кардан',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -156,7 +160,7 @@ class _UsersScreenState extends State<UsersScreen> {
       if (ok && mounted) {
         _loadUsers();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Сотрудник удалён')),
+          const SnackBar(content: Text('Корманд хориҷ карда шуд')),
         );
       }
     }
@@ -168,7 +172,7 @@ class _UsersScreenState extends State<UsersScreen> {
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
         title: const Text(
-          'Сотрудники',
+          'Кормандон',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
         backgroundColor: Colors.white,
@@ -183,7 +187,7 @@ class _UsersScreenState extends State<UsersScreen> {
         backgroundColor: const Color(0xFF4F6EF7),
         icon: const Icon(Icons.person_add, color: Colors.white),
         label: const Text(
-          'Добавить',
+          'Илова кардан',
           style: TextStyle(color: Colors.white),
         ),
       ),
@@ -192,7 +196,7 @@ class _UsersScreenState extends State<UsersScreen> {
           : RefreshIndicator(
               onRefresh: _loadUsers,
               child: _users.isEmpty
-                  ? const Center(child: Text('Нет сотрудников'))
+                  ? const Center(child: Text('Корманд нест'))
                   : ListView.separated(
                       padding: const EdgeInsets.all(16),
                       itemCount: _users.length,
@@ -244,7 +248,7 @@ class _UsersScreenState extends State<UsersScreen> {
                                     Row(
                                       children: [
                                         Text(
-                                          isOwner ? 'Владелец' : 'Продавец',
+                                          isOwner ? 'Соҳибкор' : 'Фурӯшанда',
                                           style: TextStyle(
                                             color: isOwner
                                                 ? const Color(0xFFFFD700)
@@ -255,15 +259,23 @@ class _UsersScreenState extends State<UsersScreen> {
                                         if (!isOwner) ...[
                                           const SizedBox(width: 8),
                                           Icon(
-                                            hasPin ? Icons.pin : Icons.pin_outlined,
+                                            hasPin
+                                                ? Icons.pin
+                                                : Icons.pin_outlined,
                                             size: 14,
-                                            color: hasPin ? Colors.green : Colors.grey,
+                                            color: hasPin
+                                                ? Colors.green
+                                                : Colors.grey,
                                           ),
                                           Text(
-                                            hasPin ? ' PIN ✓' : ' PIN не задан',
+                                            hasPin
+                                                ? ' PIN ✓'
+                                                : ' PIN дода нашудааст',
                                             style: TextStyle(
                                               fontSize: 12,
-                                              color: hasPin ? Colors.green : Colors.grey,
+                                              color: hasPin
+                                                  ? Colors.green
+                                                  : Colors.grey,
                                             ),
                                           ),
                                         ],

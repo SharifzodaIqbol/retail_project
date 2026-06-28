@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
@@ -327,10 +328,14 @@ class _BrandHeader extends StatelessWidget {
                   color: Colors.white.withOpacity(0.16),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Icon(
-                  Icons.point_of_sale_rounded,
-                  color: Colors.white,
-                  size: 28,
+                clipBehavior: Clip.antiAlias,
+                child: Image.asset(
+                  'assets/icon/savidor.png', // <-- ОБЯЗАТЕЛЬНО замените на PNG или SVG
+                  // Если логотип квадратный, используйте cover, чтобы он заполнил всё место
+                  fit: BoxFit.cover,
+                  // Можно явно указать размеры, чтобы Flutter не гадал:
+                  width: double.infinity,
+                  height: double.infinity,
                 ),
               ),
               const SizedBox(height: 18),

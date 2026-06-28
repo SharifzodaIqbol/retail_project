@@ -23,10 +23,35 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
   String? _ownerUsername;
   bool _tgLinked = false;
 
+  final TextEditingController _employeeSearchCtrl = TextEditingController();
+  String _employeeSearchQuery = '';
+
+  List<dynamic> get _filteredUsers {
+    if (_employeeSearchQuery.isEmpty) return _users;
+    return _users
+        .where(
+          (u) => (u['username'] ?? '').toString().toLowerCase().contains(
+            _employeeSearchQuery,
+          ),
+        )
+        .toList();
+  }
+
   @override
   void initState() {
     super.initState();
     _load();
+    _employeeSearchCtrl.addListener(() {
+      setState(() {
+        _employeeSearchQuery = _employeeSearchCtrl.text.trim().toLowerCase();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _employeeSearchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -533,15 +558,53 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  ..._users.map(
-                    (u) => _UserTile(
-                      user: u,
-                      onSetPin: () => _showSetPinDialog(u),
-                      onDelete: u['role'] != 'owner'
-                          ? () => _deleteUser(u['id'], u['username'])
-                          : null,
+                  if (_users.length > 1)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: TextField(
+                        controller: _employeeSearchCtrl,
+                        decoration: InputDecoration(
+                          hintText: 'Ҷустуҷӯй аз руи ном...',
+                          prefixIcon: const Icon(Icons.search, size: 20),
+                          suffixIcon: _employeeSearchQuery.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear, size: 18),
+                                  onPressed: () => _employeeSearchCtrl.clear(),
+                                )
+                              : null,
+                          filled: true,
+                          fillColor: Colors.white,
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 0,
+                            horizontal: 12,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                  if (_filteredUsers.isEmpty && _employeeSearchQuery.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Center(
+                        child: Text(
+                          'Ҷустуҷӯ натиҷа надод',
+                          style: TextStyle(color: Colors.grey.shade500),
+                        ),
+                      ),
+                    )
+                  else
+                    ..._filteredUsers.map(
+                      (u) => _UserTile(
+                        user: u,
+                        onSetPin: () => _showSetPinDialog(u),
+                        onDelete: u['role'] != 'owner'
+                            ? () => _deleteUser(u['id'], u['username'])
+                            : null,
+                      ),
+                    ),
                 ],
               ),
             ),

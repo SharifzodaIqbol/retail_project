@@ -35,11 +35,36 @@ class _TerminalScreenState extends State<TerminalScreen> {
   bool _isOnline = true;
   bool _fromCache = false;
 
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+
+  List<dynamic> get _filteredUsers {
+    if (_searchQuery.isEmpty) return _users;
+    return _users
+        .where(
+          (u) => (u['username'] ?? '').toString().toLowerCase().contains(
+            _searchQuery,
+          ),
+        )
+        .toList();
+  }
+
   @override
   void initState() {
     super.initState();
     _isOnline = ConnectivityService.instance.isOnline;
     _loadUsers();
+    _searchCtrl.addListener(() {
+      setState(() {
+        _searchQuery = _searchCtrl.text.trim().toLowerCase();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadUsers() async {
@@ -107,7 +132,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Режим терминала',
+                        'Ҳолати терминал',
                         style: TextStyle(
                           color: Colors.white54,
                           fontSize: 13,
@@ -145,7 +170,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
                           ),
                           SizedBox(width: 6),
                           Text(
-                            'Удерж. для выхода',
+                            'Нигоҳ дошта истед. барои баромадан',
                             style: TextStyle(
                               color: Colors.white54,
                               fontSize: 12,
@@ -179,8 +204,8 @@ class _TerminalScreenState extends State<TerminalScreen> {
                     Expanded(
                       child: Text(
                         _fromCache
-                            ? 'Офлайн-режим — показаны сохранённые данные.\nPIN-проверка работает по кэшу.'
-                            : 'Нет подключения к сети',
+                            ? 'Ҳолати Офлайн-маълумоти захирашуда нишон дода шудааст.\nPIN-санҷиш аз рӯи кэш кор мекунад.'
+                            : 'Пайвасти шабакавӣ нест',
                         style: const TextStyle(
                           color: Colors.orange,
                           fontSize: 12,
@@ -194,7 +219,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
             const SizedBox(height: 40),
 
             const Text(
-              'Выберите своё имя',
+              'Номи худро интихоб кунед',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 20,
@@ -203,10 +228,50 @@ class _TerminalScreenState extends State<TerminalScreen> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Затем введите PIN-код',
+              'Пас PIN-код ворид кунед',
               style: TextStyle(color: Colors.white54, fontSize: 14),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 24),
+
+            if (_users.length > 1)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: TextField(
+                  controller: _searchCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Ҷустуҷӯ бо ном...',
+                    hintStyle: const TextStyle(color: Colors.white38),
+                    prefixIcon: const Icon(
+                      Icons.search,
+                      color: Colors.white38,
+                      size: 20,
+                    ),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(
+                              Icons.clear,
+                              color: Colors.white38,
+                              size: 18,
+                            ),
+                            onPressed: () => _searchCtrl.clear(),
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: Colors.white10,
+                    contentPadding: const EdgeInsets.symmetric(
+                      vertical: 0,
+                      horizontal: 12,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+
+            const SizedBox(height: 16),
 
             Expanded(
               child: _loading
@@ -219,7 +284,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           const Text(
-                            'Нет сотрудников с PIN-кодом.\nПопросите владельца добавить продавца с PIN.',
+                            'Ягон коргар бо PIN-код нест.\nАз соҳибкор хоҳиш кунед, ки фурӯшандаро бо PIN илова кунад.',
                             textAlign: TextAlign.center,
                             style: TextStyle(color: Colors.white54),
                           ),
@@ -227,9 +292,27 @@ class _TerminalScreenState extends State<TerminalScreen> {
                           TextButton(
                             onPressed: _loadUsers,
                             child: const Text(
-                              'Обновить',
+                              'Навсозӣ',
                               style: TextStyle(color: Colors.white38),
                             ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : _filteredUsers.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(
+                            Icons.search_off,
+                            color: Colors.white38,
+                            size: 48,
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Ҷустуҷӯ натиҷа надод',
+                            style: TextStyle(color: Colors.white54),
                           ),
                         ],
                       ),
@@ -245,9 +328,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
                               crossAxisSpacing: 16,
                               childAspectRatio: 1.3,
                             ),
-                        itemCount: _users.length,
+                        itemCount: _filteredUsers.length,
                         itemBuilder: (context, i) {
-                          final u = _users[i];
+                          final u = _filteredUsers[i];
                           return _UserCard(
                             username: u['username'],
                             role: u['role'],
@@ -313,7 +396,7 @@ class _UserCard extends StatelessWidget {
             ),
             const SizedBox(height: 2),
             const Text(
-              'Продавец',
+              'Фурӯшанда',
               style: TextStyle(color: Colors.white38, fontSize: 12),
             ),
           ],
@@ -394,7 +477,7 @@ class _PinInputSheetState extends State<_PinInputSheet> {
         );
       } else {
         setState(() {
-          _error = 'Неверный PIN';
+          _error = 'PIN нодуруст аст';
           _pin = '';
           _loading = false;
         });
@@ -446,7 +529,7 @@ class _PinInputSheetState extends State<_PinInputSheet> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Text(
-                'Введите PIN-код',
+                'Ворид кунед PIN-код',
                 style: TextStyle(color: Colors.white54, fontSize: 14),
               ),
               if (!ConnectivityService.instance.isOnline) ...[
@@ -498,7 +581,7 @@ class _PinInputSheetState extends State<_PinInputSheet> {
           if (_isOfflineLogin) ...[
             const SizedBox(height: 10),
             const Text(
-              'Вход офлайн ✓',
+              'Даромади офлайн ✓',
               style: TextStyle(color: Colors.orange, fontSize: 13),
             ),
           ],
@@ -602,7 +685,7 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
       Navigator.pop(context, result);
     } else {
       setState(() {
-        _error = 'Неверный логин или пароль';
+        _error = 'Ном ё парол нодуруст аст';
         _loading = false;
       });
     }
@@ -613,14 +696,14 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
     return AlertDialog(
       backgroundColor: const Color(0xFF1E2235),
       title: const Text(
-        'Выход из терминала',
+        'Баромадан аз ҳолати терминал',
         style: TextStyle(color: Colors.white),
       ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const Text(
-            'Введите данные владельца',
+            'Маълумотҳои соҳибкорро ворид кунед',
             style: TextStyle(color: Colors.white54, fontSize: 13),
           ),
           const SizedBox(height: 16),
@@ -629,7 +712,7 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
             style: const TextStyle(color: Colors.white),
             textInputAction: TextInputAction.next,
             decoration: const InputDecoration(
-              labelText: 'Логин',
+              labelText: 'Ном',
               labelStyle: TextStyle(color: Colors.white54),
               enabledBorder: OutlineInputBorder(
                 borderSide: BorderSide(color: Colors.white24),
@@ -647,7 +730,7 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => _confirm(),
             decoration: const InputDecoration(
-              labelText: 'Пароль',
+              labelText: 'Рамз',
               labelStyle: TextStyle(color: Colors.white54),
               enabledBorder: OutlineInputBorder(
                 borderSide: BorderSide(color: Colors.white24),
@@ -669,7 +752,10 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context, null),
-          child: const Text('Отмена', style: TextStyle(color: Colors.white54)),
+          child: const Text(
+            'Бекор кардан',
+            style: TextStyle(color: Colors.white54),
+          ),
         ),
         ElevatedButton(
           onPressed: _loading ? null : _confirm,
@@ -685,7 +771,7 @@ class _OwnerPasswordDialogState extends State<_OwnerPasswordDialog> {
                     color: Colors.white,
                   ),
                 )
-              : const Text('Войти', style: TextStyle(color: Colors.white)),
+              : const Text('Баромад', style: TextStyle(color: Colors.white)),
         ),
       ],
     );

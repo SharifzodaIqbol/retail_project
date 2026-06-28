@@ -23,6 +23,7 @@ dependencies:
   file_picker: ^8.0.0
   connectivity_plus: ^6.0.3
   crypto: ^3.0.3
+  flutter_svg: ^2.0.9
 
 dev_dependencies:
   flutter_test:
@@ -36,24 +37,24 @@ flutter:
 
   uses-material-design: true
   assets:
-    - assets/icon/savidor.jpg
+    - assets/icon/savidor.png
 
 
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icon/savidor.jpg"
+  image_path: "assets/icon/savidor.png"
   
   web:
     generate: true
-    image_path: "assets/icon/savidor.jpg"
+    image_path: "assets/icon/savidor.png"
     background_color: "#4F6EF7"
     theme_color: "#4F6EF7"
     
   windows:
     generate: true
-    image_path: "assets/icon/savidor.jpg"
+    image_path: "assets/icon/savidor.png"
     icon_size: 256
   macos:
     generate: true
-    image_path: "assets/icon/savidor.jpg"
+    image_path: "assets/icon/savidor.png"

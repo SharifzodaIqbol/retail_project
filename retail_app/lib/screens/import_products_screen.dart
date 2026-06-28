@@ -2,18 +2,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 
-/// Экран загрузки товаров из Excel-файла (.xlsx).
-///
-/// Ожидаемый формат файла (первая строка — заголовок, она пропускается):
-/// Колонка A: название
-/// Колонка B: штрихкод
-/// Колонка C: цена закупки
-/// Колонка D: цена продажи
-/// Колонка E: остаток (для "кг" можно дробное число, напр. 2.5)
-/// Колонка F: единица измерения — "шт" или "кг"
-///
-/// Товар с уже существующим в компании штрихкодом будет обновлён,
-/// новый штрихкод — создаст новый товар.
 class ImportProductsScreen extends StatefulWidget {
   const ImportProductsScreen({super.key});
 
@@ -38,7 +26,7 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
 
     final file = picked.files.first;
     if (file.bytes == null) {
-      setState(() => _error = 'Не удалось прочитать файл');
+      setState(() => _error = 'Файлро хонда нашуд.');
       return;
     }
 
@@ -54,7 +42,7 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
     setState(() {
       _loading = false;
       if (response == null) {
-        _error = 'Не удалось загрузить файл. Проверьте соединение.';
+        _error = 'Файл насб нашуд. Шояд шумо ба интернет пайваст нестед.';
       } else if (response.containsKey('error')) {
         _error = response['error'].toString();
       } else {
@@ -69,7 +57,7 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
         title: const Text(
-          'Загрузка товаров из Excel',
+          'Ворид кардани маҳсулот аз Excel',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
         backgroundColor: Colors.white,
@@ -89,27 +77,28 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Формат файла (.xlsx)',
+                  'Формати файл (.xlsx)',
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Первая строка — заголовок, она пропускается. Дальше колонки в этом порядке:',
+                  'Сатри аввал сарлавҳа аст; аз он ҳисобида намешавад ҳамчун маҳсулот. Сутунҳо бо ин тартиб пайравӣ мекунанд:',
                   style: TextStyle(color: Colors.grey),
                 ),
                 const SizedBox(height: 8),
-                const _ColumnRow(letter: 'A', label: 'Название'),
+                const _ColumnRow(letter: 'A', label: 'Ном'),
                 const _ColumnRow(letter: 'B', label: 'Штрихкод'),
-                const _ColumnRow(letter: 'C', label: 'Цена закупки'),
-                const _ColumnRow(letter: 'D', label: 'Цена продажи'),
+                const _ColumnRow(letter: 'C', label: 'Нархи харид'),
+                const _ColumnRow(letter: 'D', label: 'Нархи фурӯш'),
                 const _ColumnRow(
                   letter: 'E',
-                  label: 'Остаток (для кг — можно дробный, напр. 2.5)',
+                  label:
+                      'Миқдор (метавонед адади касрӣ низ дохил кунед, масалан, 2,5)',
                 ),
-                const _ColumnRow(letter: 'F', label: "Единица: 'шт' или 'кг'"),
+                const _ColumnRow(letter: 'F', label: "Воҳид: 'дона' ё 'кг'"),
                 const SizedBox(height: 8),
                 Text(
-                  'Товар с уже существующим штрихкодом будет обновлён, остальные — добавлены как новые.',
+                  'Маҳсулоте ки штрих-кодаш мавҷуд аст нав карда мешавад, дигар маҳсулотҳо ҳамчун нав илова карда мешаванд.',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ],
@@ -129,7 +118,7 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
                 ),
               ),
               label: Text(
-                _loading ? 'Загрузка...' : 'Выбрать Excel-файл',
+                _loading ? 'Боркунӣ...' : 'Файли Excel-ро интихоб кунед',
                 style: const TextStyle(color: Colors.white, fontSize: 16),
               ),
             ),
@@ -184,18 +173,18 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
                       const Icon(Icons.check_circle, color: Colors.green),
                       const SizedBox(width: 8),
                       const Text(
-                        'Импорт завершён',
+                        'Воридот анҷом ёфт',
                         style: TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Text('Создано новых товаров: ${_result!['created'] ?? 0}'),
-                  Text('Обновлено товаров: ${_result!['updated'] ?? 0}'),
+                  Text('Маҳсулоти нав сохта шуд: ${_result!['created'] ?? 0}'),
+                  Text('Маҳсулотҳои тағйир ёфта: ${_result!['updated'] ?? 0}'),
                   if ((_result!['errors'] as List?)?.isNotEmpty ?? false) ...[
                     const SizedBox(height: 12),
                     Text(
-                      'Строки с ошибками (${(_result!['errors'] as List).length}):',
+                      'Старҳои хато (${(_result!['errors'] as List).length}):',
                       style: const TextStyle(
                         fontWeight: FontWeight.w600,
                         color: Colors.orange,
@@ -207,7 +196,7 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
                         (e) => Padding(
                           padding: const EdgeInsets.symmetric(vertical: 2),
                           child: Text(
-                            'Строка ${e['row']}: ${e['message']}',
+                            'Сатр ${e['row']}: ${e['message']}',
                             style: const TextStyle(
                               fontSize: 12,
                               color: Colors.grey,

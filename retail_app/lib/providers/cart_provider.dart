@@ -3,8 +3,6 @@ import '../models/product.dart';
 
 class CartItem {
   final Product product;
-  // double — для товаров с unit == 'kg' нужно поддерживать дробное
-  // количество (например, 0.5 кг). Для штучных товаров остаётся целым.
   double quantity;
 
   CartItem({required this.product, double? quantity})
@@ -33,13 +31,9 @@ class CartProvider with ChangeNotifier {
     } else {
       _items[product.id] = CartItem(product: product, quantity: 1);
     }
-    notifyListeners(); // Обновляет экран
+    notifyListeners();
   }
 
-  /// Добавляет вручную введённый вес (кг) к товару в корзине.
-  /// Если товара ещё нет в корзине — создаёт строку с этим весом,
-  /// если уже есть — добавляет к текущему количеству (например,
-  /// продавец взвесил товар во второй раз для того же покупателя).
   void addWeighedAmount(Product product, double weight) {
     if (weight <= 0) return;
     if (_items.containsKey(product.id)) {
@@ -51,9 +45,6 @@ class CartProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  /// Убирает 1 шт. для штучных товаров. Для весовых товаров эта функция
-  /// не вызывается — там используется удаление всей строки или ручное
-  /// редактирование количества.
   void removeOneItem(int productId) {
     if (!_items.containsKey(productId)) return;
     final item = _items[productId]!;

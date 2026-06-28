@@ -329,8 +329,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _statChip('Выручка', _fmt(p['total_revenue']), Colors.blue),
-                  _statChip('Прибыль', _fmt(p['total_profit']), Colors.green),
+                  _statChip('Фурӯш', _fmt(p['total_revenue']), Colors.blue),
+                  _statChip('Фоида', _fmt(p['total_profit']), Colors.green),
                 ],
               ),
             ],

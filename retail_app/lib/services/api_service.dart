@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -19,6 +20,25 @@ class RateLimitException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// Универсальный контейнер для ответов с пагинацией от сервера.
+class PaginatedResult<T> {
+  final List<T> data;
+  final int total;
+  final int page;
+  final int limit;
+  final int totalPages;
+
+  const PaginatedResult({
+    required this.data,
+    required this.total,
+    required this.page,
+    required this.limit,
+    required this.totalPages,
+  });
+
+  bool get hasNextPage => page < totalPages;
 }
 
 class ApiService {
@@ -82,41 +102,103 @@ class ApiService {
   /// Возвращает все товары.
   /// Онлайн: запрашивает API и обновляет полный кэш.
   /// Офлайн: возвращает товары из SQLite-кэша.
-  Future<List<Product>> getAllProducts() async {
+  /// Получает страницу товаров с сервера.
+  /// Возвращает [PaginatedResult] с полями data, total, page, limit, totalPages.
+  /// При офлайне возвращает кэшированные данные без пагинации (page=1).
+  Future<PaginatedResult<Product>> getProducts({
+    int page = 1,
+    int limit = 50,
+  }) async {
     if (ConnectivityService.instance.isOnline) {
       try {
-        final response = await http.get(
-          Uri.parse('$baseUrl/api/products'),
-          headers: await _getHeaders(),
-        );
+        final uri = Uri.parse(
+          '$baseUrl/api/products',
+        ).replace(queryParameters: {'page': '$page', 'limit': '$limit'});
+        final response = await http.get(uri, headers: await _getHeaders());
         _checkSubscription(response.statusCode);
         if (response.statusCode == 200) {
-          final List<dynamic> data = jsonDecode(response.body);
-          // Обновляем кэш свежими данными
-          await _db.cacheProducts(data.cast<Map<String, dynamic>>());
-          return data.map((json) => Product.fromJson(json)).toList();
+          final body = jsonDecode(response.body) as Map<String, dynamic>;
+          final items = (body['data'] as List)
+              .map((j) => Product.fromJson(j as Map<String, dynamic>))
+              .toList();
+          // Кэшируем только первую страницу (свежий снимок склада)
+          if (page == 1) {
+            await _db.cacheProducts(
+              (body['data'] as List).cast<Map<String, dynamic>>(),
+            );
+          }
+          return PaginatedResult(
+            data: items,
+            total: body['total'] as int,
+            page: body['page'] as int,
+            limit: body['limit'] as int,
+            totalPages: body['total_pages'] as int,
+          );
         }
       } catch (_) {
         // Сетевая ошибка — пробуем кэш
       }
     }
 
-    // Офлайн — читаем из кэша
+    // Офлайн — читаем из кэша (без пагинации, весь кэш)
     final cached = await _db.getCachedProducts();
-    return cached.map((json) => Product.fromJson(json)).toList();
+    final items = cached.map((j) => Product.fromJson(j)).toList();
+    return PaginatedResult(
+      data: items,
+      total: items.length,
+      page: 1,
+      limit: items.length,
+      totalPages: 1,
+    );
   }
 
-  Future<bool> addProduct(Map<String, dynamic> productData) async {
+  /// Оставляем для обратной совместимости (HomeScreen, кэш штрихкодов).
+  Future<List<Product>> getAllProducts() async {
+    final result = await getProducts(page: 1, limit: 200);
+    return result.data;
+  }
+
+  /// Добавляет товар. Возвращает null при успехе, иначе — строку с ошибкой.
+  Future<String?> addProduct(Map<String, dynamic> productData) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/api/products'),
-        headers: await _getHeaders(),
-        body: jsonEncode(productData),
-      );
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/products'),
+            headers: await _getHeaders(),
+            body: jsonEncode(productData),
+          )
+          .timeout(const Duration(seconds: 15));
       _checkSubscription(response.statusCode);
-      return response.statusCode == 200;
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return null; // успех
+      }
+      // Пробуем достать сообщение из тела ответа
+      try {
+        final body = jsonDecode(response.body);
+        final msg = body['error'] ?? body['message'] ?? body['detail'];
+        if (msg != null) return msg.toString();
+      } catch (_) {}
+      // Fallback по статус-коду
+      switch (response.statusCode) {
+        case 400:
+          return 'Нодурустии додаҳо (400)';
+        case 401:
+          return 'Ваколат нест. Лутфан аз нав ворид шавед (401)';
+        case 403:
+          return 'Дастрасӣ манъ аст (403)';
+        case 409:
+          return 'Маҳсулот бо ин штрихкод аллакай мавҷуд аст (409)';
+        case 422:
+          return 'Маълумот дуруст нест. Нархҳо ва миқдорро санҷед (422)';
+        case 500:
+          return 'Хатогии сервер. Каме дер кӯшиш кунед (500)';
+        default:
+          return 'Хатогӣ: ${response.statusCode}';
+      }
+    } on TimeoutException {
+      return 'Вақт тамом шуд. Пайвастшавии интернетро санҷед';
     } catch (e) {
-      return false;
+      return 'Хатогии пайвастшавӣ: $e';
     }
   }
 
@@ -223,18 +305,41 @@ class ApiService {
     }
   }
 
-  Future<List<dynamic>> getSalesHistory() async {
+  /// Получает страницу истории продаж.
+  Future<PaginatedResult<dynamic>> getSalesPage({
+    int page = 1,
+    int limit = 50,
+  }) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/sales'),
-        headers: await _getHeaders(),
-      );
+      final uri = Uri.parse(
+        '$baseUrl/api/sales',
+      ).replace(queryParameters: {'page': '$page', 'limit': '$limit'});
+      final response = await http.get(uri, headers: await _getHeaders());
       _checkSubscription(response.statusCode);
-      if (response.statusCode == 200) return jsonDecode(response.body);
-      return [];
-    } catch (e) {
-      return [];
-    }
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return PaginatedResult(
+          data: body['data'] as List<dynamic>,
+          total: body['total'] as int,
+          page: body['page'] as int,
+          limit: body['limit'] as int,
+          totalPages: body['total_pages'] as int,
+        );
+      }
+    } catch (_) {}
+    return PaginatedResult(
+      data: [],
+      total: 0,
+      page: page,
+      limit: limit,
+      totalPages: 0,
+    );
+  }
+
+  /// Оставляем для обратной совместимости.
+  Future<List<dynamic>> getSalesHistory() async {
+    final result = await getSalesPage(page: 1, limit: 200);
+    return result.data;
   }
 
   // ─── Аналитика ───────────────────────────────────────────────────────────
@@ -631,17 +736,41 @@ class ApiService {
     }
   }
 
-  Future<List<dynamic>> getDebtors() async {
+  /// Получает страницу должников.
+  Future<PaginatedResult<dynamic>> getDebtorsPage({
+    int page = 1,
+    int limit = 50,
+  }) async {
     try {
-      final response = await http
-          .get(Uri.parse('$baseUrl/api/debtors'), headers: await _getHeaders())
-          .timeout(const Duration(seconds: 10));
+      final uri = Uri.parse(
+        '$baseUrl/api/debtors',
+      ).replace(queryParameters: {'page': '$page', 'limit': '$limit'});
+      final response = await http.get(uri, headers: await _getHeaders());
       _checkSubscription(response.statusCode);
-      if (response.statusCode == 200) return jsonDecode(response.body);
-      return [];
-    } catch (e) {
-      return [];
-    }
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        return PaginatedResult(
+          data: body['data'] as List<dynamic>,
+          total: body['total'] as int,
+          page: body['page'] as int,
+          limit: body['limit'] as int,
+          totalPages: body['total_pages'] as int,
+        );
+      }
+    } catch (_) {}
+    return PaginatedResult(
+      data: [],
+      total: 0,
+      page: page,
+      limit: limit,
+      totalPages: 0,
+    );
+  }
+
+  /// Оставляем для обратной совместимости.
+  Future<List<dynamic>> getDebtors() async {
+    final result = await getDebtorsPage(page: 1, limit: 200);
+    return result.data;
   }
 
   Future<Map<String, dynamic>?> createDebtor({

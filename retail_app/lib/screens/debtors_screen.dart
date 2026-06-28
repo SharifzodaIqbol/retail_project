@@ -23,10 +23,34 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
   List<dynamic> _debtors = [];
   bool _loading = true;
 
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+
   @override
   void initState() {
     super.initState();
     _load();
+    _searchCtrl.addListener(() {
+      setState(() {
+        _searchQuery = _searchCtrl.text.trim().toLowerCase();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  // Список должников с учётом поиска по имени (или телефону).
+  List<dynamic> get _filteredDebtors {
+    if (_searchQuery.isEmpty) return _debtors;
+    return _debtors.where((d) {
+      final name = (d['full_name'] ?? '').toString().toLowerCase();
+      final phone = (d['phone'] ?? '').toString().toLowerCase();
+      return name.contains(_searchQuery) || phone.contains(_searchQuery);
+    }).toList();
   }
 
   Future<void> _load() async {
@@ -45,88 +69,147 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
     final phoneCtrl = TextEditingController();
     final amountCtrl = TextEditingController();
     final noteCtrl = TextEditingController();
+    String? nameError;
+    String? amountError;
+    bool saving = false;
 
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Илова кардани қарздор'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Номи қарздор *',
-                  border: OutlineInputBorder(),
+      builder: (_) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Илова кардани қарздор'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  onChanged: (_) => setDialogState(() => nameError = null),
+                  decoration: InputDecoration(
+                    labelText: 'Номи қарздор *',
+                    border: const OutlineInputBorder(),
+                    errorText: nameError,
+                  ),
+                  textCapitalization: TextCapitalization.words,
                 ),
-                textCapitalization: TextCapitalization.words,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: phoneCtrl,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(
-                  labelText: 'Телефон (ихтиёрӣ)',
-                  border: OutlineInputBorder(),
-                  prefixText: '+992 ',
+                const SizedBox(height: 12),
+                TextField(
+                  controller: phoneCtrl,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    labelText: 'Телефон (ихтиёрӣ)',
+                    border: OutlineInputBorder(),
+                    prefixText: '+992 ',
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: amountCtrl,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
+                const SizedBox(height: 12),
+                TextField(
+                  controller: amountCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+                  ],
+                  onChanged: (_) => setDialogState(() => amountError = null),
+                  decoration: InputDecoration(
+                    labelText: 'Миқдори қарз (сомонӣ)',
+                    border: const OutlineInputBorder(),
+                    helperText: '0 — агар қарз ҳоло нест',
+                    errorText: amountError,
+                  ),
                 ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
-                ],
-                decoration: const InputDecoration(
-                  labelText: 'Миқдори қарз (сомонӣ)',
-                  border: OutlineInputBorder(),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: noteCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Фаҳмондадиҳи (ихтиёрӣ)',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: noteCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Фаҳмондадиҳи (ихтиерӣ)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Бекор кардан'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4F6EF7),
+              ],
             ),
-            onPressed: () async {
-              if (nameCtrl.text.trim().isEmpty) return;
-              final amount = double.tryParse(amountCtrl.text) ?? 0;
-              final result = await _api.createDebtor(
-                fullName: nameCtrl.text.trim(),
-                phone: phoneCtrl.text.trim(),
-                initialDebt: amount,
-                note: noteCtrl.text.trim(),
-              );
-              if (!mounted) return;
-              Navigator.pop(context);
-              if (result != null) {
-                _load();
-                _showSnack('Қарздор илова карда шуд', Colors.green);
-              } else {
-                _showSnack('Хатогӣ дар илова', Colors.red);
-              }
-            },
-            child: const Text('Захира', style: TextStyle(color: Colors.white)),
           ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Бекор кардан'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF4F6EF7),
+              ),
+              onPressed: saving
+                  ? null
+                  : () async {
+                      bool hasError = false;
+
+                      if (nameCtrl.text.trim().isEmpty) {
+                        setDialogState(
+                          () => nameError = 'Номи қарздорро ворид кунед',
+                        );
+                        hasError = true;
+                      } else if (nameCtrl.text.trim().length < 2) {
+                        setDialogState(() => nameError = 'Ном хеле кӯтоҳ аст');
+                        hasError = true;
+                      }
+
+                      final rawAmount = amountCtrl.text.trim().isEmpty
+                          ? '0'
+                          : amountCtrl.text.trim();
+                      final amount = double.tryParse(
+                        rawAmount.replaceAll(',', '.'),
+                      );
+                      if (amount == null) {
+                        setDialogState(
+                          () => amountError = 'Рақами нодуруст (мас: 150.00)',
+                        );
+                        hasError = true;
+                      } else if (amount < 0) {
+                        setDialogState(
+                          () => amountError = 'Қарз манфӣ буда наметавонад',
+                        );
+                        hasError = true;
+                      }
+
+                      if (hasError) return;
+
+                      setDialogState(() => saving = true);
+
+                      final result = await _api.createDebtor(
+                        fullName: nameCtrl.text.trim(),
+                        phone: phoneCtrl.text.trim(),
+                        initialDebt: amount!,
+                        note: noteCtrl.text.trim(),
+                      );
+
+                      if (!mounted) return;
+                      setDialogState(() => saving = false);
+                      Navigator.pop(context);
+
+                      if (result != null) {
+                        _load();
+                        _showSnack('Қарздор илова карда шуд', Colors.green);
+                      } else {
+                        _showSnack(
+                          'Хатогӣ дар илова. Пайвастшавиро санҷед.',
+                          Colors.red,
+                        );
+                      }
+                    },
+              child: saving
+                  ? const SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Text('Захира', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -138,97 +221,171 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
     final noteCtrl = TextEditingController();
     final isPay = type == 'pay';
     final totalDebt = (debtor['total_debt'] as num).toDouble();
+    String? amountError;
+    bool saving = false;
 
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text(
-          isPay ? '💳 Пардохтро ворид кунед' : '➕ Илова кардани қарз',
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              debtor['full_name'],
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-            ),
-            Text(
-              'Қарзи ҳозира: ${totalDebt.toStringAsFixed(2)} сомонӣ',
-              style: TextStyle(
-                color: totalDebt > 0 ? Colors.red.shade600 : Colors.green,
-                fontSize: 13,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(
+            isPay ? '💳 Пардохтро ворид кунед' : '➕ Илова кардани қарз',
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                debtor['full_name'],
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: amountCtrl,
-              autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
+              Text(
+                'Қарзи ҳозира: ${totalDebt.toStringAsFixed(2)} сомонӣ',
+                style: TextStyle(
+                  color: totalDebt > 0 ? Colors.red.shade600 : Colors.green,
+                  fontSize: 13,
+                ),
               ),
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+              if (isPay && totalDebt <= 0) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.check_circle, color: Colors.green, size: 16),
+                      SizedBox(width: 6),
+                      Text(
+                        'Қарз пурра пардохта шудааст',
+                        style: TextStyle(color: Colors.green, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
               ],
-              decoration: InputDecoration(
-                labelText: 'Маблағ (сомонӣ) *',
-                border: const OutlineInputBorder(),
-                suffix: isPay
-                    ? TextButton(
-                        style: TextButton.styleFrom(padding: EdgeInsets.zero),
-                        onPressed: () =>
-                            amountCtrl.text = totalDebt.toStringAsFixed(2),
-                        child: const Text('Ҳамааш'),
-                      )
-                    : null,
+              const SizedBox(height: 16),
+              TextField(
+                controller: amountCtrl,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+                ],
+                onChanged: (_) => setDialogState(() => amountError = null),
+                decoration: InputDecoration(
+                  labelText: 'Маблағ (сомонӣ) *',
+                  border: const OutlineInputBorder(),
+                  errorText: amountError,
+                  suffix: isPay && totalDebt > 0
+                      ? TextButton(
+                          style: TextButton.styleFrom(padding: EdgeInsets.zero),
+                          onPressed: () {
+                            amountCtrl.text = totalDebt.toStringAsFixed(2);
+                            setDialogState(() => amountError = null);
+                          },
+                          child: const Text('Ҳамааш'),
+                        )
+                      : null,
+                ),
               ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: noteCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Фаҳмондадиҳи (ихтиёрӣ)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Бекор кардан'),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: noteCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Фаҳмондадиҳи (ихтиерӣ)',
-                border: OutlineInputBorder(),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isPay ? Colors.green : const Color(0xFF4F6EF7),
               ),
+              onPressed: saving
+                  ? null
+                  : () async {
+                      final raw = amountCtrl.text.trim().replaceAll(',', '.');
+                      final amount = double.tryParse(raw);
+
+                      if (amount == null || raw.isEmpty) {
+                        setDialogState(
+                          () => amountError =
+                              'Маблағро дуруст ворид кунед (мас: 50.00)',
+                        );
+                        return;
+                      }
+                      if (amount <= 0) {
+                        setDialogState(
+                          () => amountError = 'Маблағ бояд аз нол зиёд бошад',
+                        );
+                        return;
+                      }
+                      if (isPay && amount > totalDebt) {
+                        setDialogState(
+                          () => amountError =
+                              'Пардохт (${amount.toStringAsFixed(2)}) аз қарз (${totalDebt.toStringAsFixed(2)}) зиёд аст',
+                        );
+                        return;
+                      }
+
+                      setDialogState(() => saving = true);
+
+                      final result = await _api.debtOperation(
+                        debtor['id'],
+                        amount: amount,
+                        type: type,
+                        note: noteCtrl.text.trim(),
+                      );
+
+                      if (!mounted) return;
+                      setDialogState(() => saving = false);
+                      Navigator.pop(context);
+
+                      if (result != null) {
+                        _load();
+                        _showSnack(
+                          isPay
+                              ? 'Пардохт сабт шудааст'
+                              : 'Қарз илова карда шуд',
+                          isPay ? Colors.green : Colors.orange,
+                        );
+                      } else {
+                        _showSnack(
+                          'Хатои амалиёт. Пайвастшавиро санҷед.',
+                          Colors.red,
+                        );
+                      }
+                    },
+              child: saving
+                  ? const SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : Text(
+                      isPay ? 'Пардохтро сабт кунед' : 'Иловаи қарз',
+                      style: const TextStyle(color: Colors.white),
+                    ),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Бекор кардан'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: isPay ? Colors.green : const Color(0xFF4F6EF7),
-            ),
-            onPressed: () async {
-              final amount = double.tryParse(amountCtrl.text);
-              if (amount == null || amount <= 0) return;
-              final result = await _api.debtOperation(
-                debtor['id'],
-                amount: amount,
-                type: type,
-                note: noteCtrl.text.trim(),
-              );
-              if (!mounted) return;
-              Navigator.pop(context);
-              if (result != null) {
-                _load();
-                _showSnack(
-                  isPay ? 'Пардохт сабт шудааст' : 'Қарз илова карда шуд',
-                  isPay ? Colors.green : Colors.orange,
-                );
-              } else {
-                _showSnack('Хатои амалиёт', Colors.red);
-              }
-            },
-            child: Text(
-              isPay ? 'Пардохтро сабт кунед' : 'Иловаи қарз',
-              style: const TextStyle(color: Colors.white),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -356,7 +513,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
       final ok = await _api.deleteDebtor(debtor['id']);
       if (ok && mounted) {
         _load();
-        _showSnack('Номи қарздо нест шуд', Colors.grey);
+        _showSnack('Номи қарздор нест шуд', Colors.grey);
       }
     }
   }
@@ -472,6 +629,36 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                       ),
                     ),
 
+                  // ─── Поиск по имени ───────────────────────────
+                  if (_debtors.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: TextField(
+                        controller: _searchCtrl,
+                        decoration: InputDecoration(
+                          hintText:
+                              'Исм ё шумора телефони қарздорро ворид кунед...',
+                          prefixIcon: const Icon(Icons.search, size: 20),
+                          suffixIcon: _searchQuery.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear, size: 18),
+                                  onPressed: () => _searchCtrl.clear(),
+                                )
+                              : null,
+                          filled: true,
+                          fillColor: Colors.white,
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 0,
+                            horizontal: 12,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                        ),
+                      ),
+                    ),
+
                   // ─── Список ──────────────────────────────────
                   Expanded(
                     child: _debtors.isEmpty
@@ -495,19 +682,43 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                               ],
                             ),
                           )
+                        : _filteredDebtors.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.search_off,
+                                  size: 64,
+                                  color: Colors.grey.shade300,
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Ҷустуҷӯ натиҷа надод',
+                                  style: TextStyle(
+                                    color: Colors.grey.shade500,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
                         : ListView.builder(
                             padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
-                            itemCount: _debtors.length,
-                            itemBuilder: (_, i) => _DebtorCard(
-                              debtor: _debtors[i],
-                              isOwner: widget.role == 'owner',
-                              onPay: () =>
-                                  _showOperationDialog(_debtors[i], 'pay'),
-                              onTake: () =>
-                                  _showOperationDialog(_debtors[i], 'take'),
-                              onHistory: () => _showHistory(_debtors[i]),
-                              onDelete: () => _deleteDebtor(_debtors[i]),
-                            ),
+                            itemCount: _filteredDebtors.length,
+                            itemBuilder: (_, i) {
+                              final debtor = _filteredDebtors[i];
+                              return _DebtorCard(
+                                debtor: debtor,
+                                isOwner: widget.role == 'owner',
+                                onPay: () =>
+                                    _showOperationDialog(debtor, 'pay'),
+                                onTake: () =>
+                                    _showOperationDialog(debtor, 'take'),
+                                onHistory: () => _showHistory(debtor),
+                                onDelete: () => _deleteDebtor(debtor),
+                              );
+                            },
                           ),
                   ),
                 ],

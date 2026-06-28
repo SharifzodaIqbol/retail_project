@@ -20,14 +20,13 @@ class SubscriptionExpiredScreen extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             const Text(
-              'Подписка истекла',
+              'Обуна ба охир расид',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             const Text(
-              'Доступ к системе заблокирован. Пробный период или оплаченный тариф подошел к концу. Пожалуйста, свяжитесь с администратором или оплатите подписку в личном кабинете.',
-              textAlign: TextAlign
-                  .center, // <-- ИСПРАВЛЕНО: Вместо Center используем TextAlign.center
+              'Дастрасӣ ба система баста шудааст. Давраи озмоишӣ ё тарофаи пардохтшуда ба охир расид. Лутфан бо администратор тамос гиред. Telegram: @sharifzoda.is',
+              textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: Colors.grey),
             ),
             const SizedBox(height: 40),
@@ -37,12 +36,9 @@ class SubscriptionExpiredScreen extends StatelessWidget {
                 backgroundColor: Colors.blue,
                 foregroundColor: Colors.white,
               ),
-              icon: const Icon(
-                Icons.refresh,
-              ), // <-- ИСПРАВЛЕНО: Проверьте явное указание именованных аргументов
-              label: const Text('Проверить оплату снова'),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Пардохтро дубора тафтиш кунед'),
               onPressed: () {
-                // Перезапускаем приложение (Bootstrapper проверит статус заново)
                 Navigator.of(
                   context,
                 ).pushNamedAndRemoveUntil('/', (route) => false);
@@ -58,7 +54,7 @@ class SubscriptionExpiredScreen extends StatelessWidget {
                   ).pushNamedAndRemoveUntil('/', (route) => false);
                 }
               },
-              child: const Text('Выйти из аккаунта'),
+              child: const Text('Аз аккаунт хориҷ шудан'),
             ),
           ],
         ),

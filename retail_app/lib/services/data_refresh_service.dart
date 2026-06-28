@@ -44,16 +44,6 @@ class DataRefreshService {
   }
 }
 
-/// Миксин для автоматического обновления экрана при событиях.
-///
-/// Использование:
-///   class _MyScreenState extends State<MyScreen> with AutoRefreshMixin {
-///     @override
-///     Stream<void> get refreshStream => DataRefreshService.instance.onSaleChanged;
-///
-///     @override
-///     Future<void> loadData() => _fetchData();
-///   }
 mixin AutoRefreshMixin<T extends StatefulWidget> on State<T> {
   StreamSubscription<void>? _sub;
 
