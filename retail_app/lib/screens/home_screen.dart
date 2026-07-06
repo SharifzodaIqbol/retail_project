@@ -34,7 +34,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _syncOfflineSales();
+    // Синхронизация офлайн-чеков больше не привязана к жизни этого
+    // экрана — её ведёт SyncService.instance на уровне всего приложения
+    // (см. main.dart), реагируя на реальное восстановление связи, а не
+    // на то, открыта ли сейчас вкладка "Касса".
     _loadUserInfo(); // Вызов метода загрузки пользователя
 
     // Запрашиваем фокус сразу после того, как кадр построится
@@ -306,35 +309,6 @@ class _HomeScreenState extends State<HomeScreen> {
       // Когда диалог изменения количества закрылся, возвращаем фокус на сканер
       _requestScannerFocus();
     });
-  }
-
-  Future<void> _syncOfflineSales() async {
-    final unsynced = await DatabaseHelper.instance.getUnsyncedSales();
-    if (unsynced.isEmpty) return;
-
-    int successCount = 0;
-    for (var row in unsynced) {
-      final saleData = jsonDecode(row['sale_data']);
-      bool success = await _apiService.createSaleFromRawData(saleData);
-      if (success) {
-        await DatabaseHelper.instance.markSaleAsSynced(row['id']);
-        successCount++;
-      }
-    }
-
-    if (successCount > 0) {
-      DataRefreshService.instance.notifySaleChanged();
-      DataRefreshService.instance.notifyProductChanged();
-    }
-
-    if (successCount > 0 && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('☁️ Квитансияҳо ҳамоҳанг карда шудаанд: $successCount'),
-          backgroundColor: Colors.blue,
-        ),
-      );
-    }
   }
 
   void _logout() async {
@@ -732,28 +706,32 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 child: Row(
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text(
-                          'ДАР МАҶМӮЪ',
-                          style: TextStyle(
-                            color: Colors.grey,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 1,
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'ДАР МАҶМӮЪ',
+                            style: TextStyle(
+                              color: Colors.grey,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 1,
+                            ),
                           ),
-                        ),
-                        Text(
-                          '${cart.totalAmount.toStringAsFixed(2)} сомонӣ',
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF1A1A2E),
+                          Text(
+                            '${cart.totalAmount.toStringAsFixed(2)} сомонӣ',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF1A1A2E),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                     const SizedBox(width: 20),
                     Expanded(
@@ -878,20 +856,14 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                 decimal: true,
               ),
               onChanged: (_) => setState(() {}),
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
               decoration: InputDecoration(
                 hintText: '0.00',
-                errorText: _isInsufficient
-                    ? 'Маблағ аз чек камтар аст'
-                    : null,
+                errorText: _isInsufficient ? 'Маблағ аз чек камтар аст' : null,
                 suffixIcon: _receivedCtrl.text.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.clear, size: 18),
-                        onPressed: () =>
-                            setState(() => _receivedCtrl.clear()),
+                        onPressed: () => setState(() => _receivedCtrl.clear()),
                       )
                     : null,
                 border: OutlineInputBorder(
@@ -929,10 +901,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
             // Карточка сдачи / подсказка
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 12,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
                 color: _change != null
                     ? Colors.green.shade50
@@ -979,10 +948,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
           onPressed: _isInsufficient
               ? null
               : () => Navigator.pop(context, true),
-          child: const Text(
-            'Пардохт',
-            style: TextStyle(color: Colors.white),
-          ),
+          child: const Text('Пардохт', style: TextStyle(color: Colors.white)),
         ),
       ],
     );

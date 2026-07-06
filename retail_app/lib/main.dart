@@ -13,6 +13,7 @@ import 'screens/owner_panel_screen.dart';
 import 'screens/debtors_screen.dart';
 import 'services/api_service.dart';
 import 'services/connectivity_service.dart';
+import 'services/sync_service.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
@@ -22,6 +23,10 @@ void main() async {
     databaseFactory = databaseFactoryFfiWeb;
   }
   await ConnectivityService.instance.init();
+  // Живёт на уровне всего приложения: как только связь появляется —
+  // неотправленные чеки и каталог товаров синхронизируются сами,
+  // независимо от того, какой экран сейчас открыт у продавца.
+  SyncService.instance.start();
   runApp(
     MultiProvider(
       providers: [ChangeNotifierProvider(create: (_) => CartProvider())],
@@ -102,6 +107,10 @@ class _BootstrapperState extends State<_Bootstrapper> {
       _companyId = companyId;
       _companyName = companyName;
     });
+    // Сразу после входа прогреваем офлайн-кэш целиком, не дожидаясь
+    // первого фонового цикла — так офлайн-режим готов с первой минуты
+    // работы, а не только через ~45 секунд.
+    SyncService.instance.syncNow();
   }
 
   void _onEnterTerminal() {

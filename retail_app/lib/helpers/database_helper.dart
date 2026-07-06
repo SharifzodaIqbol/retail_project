@@ -146,76 +146,210 @@ class DatabaseHelper {
   }
 
   // ─── Кэш товаров ─────────────────────────────────────────────────────────
+  //
+  // Раньше поиск товара (`searchCachedProductsByName`) и поиск по
+  // штрихкоду (`getCachedProductByBarcode`) при каждом вызове шли в
+  // sqflite: platform channel в нативный поток + `LIKE '%...%'` без
+  // индекса (полное построчное сканирование таблицы). При наборе текста
+  // в кассе это дёргалось на каждую букву. На слабых Android-аппаратах
+  // (а именно такие массово используются в рознице в Таджикистане) это
+  // давало заметные подтормаживания офлайн-поиска — независимо от того,
+  // как быстро определяется сам факт "нет сети".
+  //
+  // Каталог небольшого/среднего магазина обычно — от пары сотен до
+  // нескольких тысяч позиций, что комфортно помещается в память
+  // процесса. Поэтому держим read-through копию каталога в памяти и
+  // ищем по ней в чистом Dart (без похода в БД и без сканирования) —
+  // это на порядки быстрее, чем SQL LIKE через platform channel.
+  // SQLite остаётся источником истины: данные переживают перезапуск
+  // приложения, а в память подгружаются один раз лениво при первом
+  // обращении.
+  List<Map<String, dynamic>>? _memProducts; // null = ещё не загружен из БД
+  final Map<String, Map<String, dynamic>> _memByBarcode = {};
+
+  Future<void> _ensureMemLoaded() async {
+    if (_memProducts != null) return;
+    final db = await instance.database;
+    _memProducts = await db.query('product_cache');
+    _rebuildBarcodeIndex();
+  }
+
+  void _rebuildBarcodeIndex() {
+    _memByBarcode.clear();
+    for (final p in _memProducts ?? const <Map<String, dynamic>>[]) {
+      final barcode = p['barcode'] as String? ?? '';
+      if (barcode.isNotEmpty) _memByBarcode[barcode] = p;
+    }
+  }
+
+  Map<String, dynamic> _normalizeProduct(Map<String, dynamic> p) => {
+    'id': p['id'],
+    'name': p['name'],
+    'barcode': p['barcode'] ?? '',
+    'buy_price': (p['buy_price'] as num?)?.toDouble() ?? 0.0,
+    'sell_price': (p['sell_price'] as num?)?.toDouble() ?? 0.0,
+    'stock': (p['stock'] as num?)?.toDouble() ?? 0.0,
+    'unit': p['unit'] ?? 'шт',
+  };
 
   /// Полностью заменяет кэш товаров (вызывать после успешного getAllProducts).
   Future<void> cacheProducts(List<Map<String, dynamic>> products) async {
     final db = await instance.database;
     final batch = db.batch();
     batch.delete('product_cache');
+    final normalized = <Map<String, dynamic>>[];
     for (final p in products) {
-      batch.insert('product_cache', {
-        'id': p['id'],
-        'name': p['name'],
-        'barcode': p['barcode'] ?? '',
-        'buy_price': (p['buy_price'] as num?)?.toDouble() ?? 0.0,
-        'sell_price': (p['sell_price'] as num?)?.toDouble() ?? 0.0,
-        'stock': (p['stock'] as num?)?.toDouble() ?? 0.0,
-        'unit': p['unit'] ?? 'шт',
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      final row = _normalizeProduct(p);
+      normalized.add(row);
+      batch.insert(
+        'product_cache',
+        row,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     }
     await batch.commit(noResult: true);
+
+    // Полная пересборка каталога — обновляем и in-memory копию целиком,
+    // чтобы следующий поиск сразу видел актуальные данные.
+    _memProducts = normalized;
+    _rebuildBarcodeIndex();
+  }
+
+  /// Обновляет в кэше только переданные товары, не трогая остальной
+  /// каталог. Используется при обычном онлайн-просмотре одной страницы
+  /// склада — раньше такой просмотр по ошибке ПОЛНОСТЬЮ перезаписывал
+  /// кэш этой единственной страницей (см. [cacheProducts]), из-за чего
+  /// офлайн-каталог "худел" до последней открытой страницы и порядок
+  /// товаров переставал совпадать с онлайном. Полную пересборку кэша
+  /// (со сверкой состава и порядка) делает [cacheProducts].
+  Future<void> upsertCachedProducts(List<Map<String, dynamic>> products) async {
+    if (products.isEmpty) return;
+    await _ensureMemLoaded();
+
+    final db = await instance.database;
+    final batch = db.batch();
+    for (final p in products) {
+      final row = _normalizeProduct(p);
+      batch.insert(
+        'product_cache',
+        row,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
+      final idx = _memProducts!.indexWhere((e) => e['id'] == row['id']);
+      if (idx >= 0) {
+        _memProducts![idx] = row;
+      } else {
+        _memProducts!.add(row);
+      }
+    }
+    await batch.commit(noResult: true);
+    _rebuildBarcodeIndex();
   }
 
   /// Возвращает все товары из кэша.
+  ///
+  /// Важно: порядок должен совпадать с тем, что отдаёт сервер в онлайне
+  /// (ORDER BY stock ASC на бэкенде), иначе список на складе выглядит
+  /// "перемешанным" при переходе в офлайн. `id ASC` вторым ключом даёт
+  /// стабильный порядок при одинаковом остатке (как обычно и получается
+  /// в Postgres при равенстве значений сортировки).
   Future<List<Map<String, dynamic>>> getCachedProducts() async {
-    final db = await instance.database;
-    return await db.query('product_cache', orderBy: 'name ASC');
+    await _ensureMemLoaded();
+    final list = List<Map<String, dynamic>>.from(_memProducts!);
+    list.sort((a, b) {
+      final stockCmp = (a['stock'] as num).compareTo(b['stock'] as num);
+      if (stockCmp != 0) return stockCmp;
+      return (a['id'] as num).compareTo(b['id'] as num);
+    });
+    return list;
   }
 
-  /// Ищет товар по штрихкоду в кэше.
+  /// Ищет товар по штрихкоду в кэше. O(1) по in-memory индексу вместо
+  /// похода в sqflite на каждый скан.
   Future<Map<String, dynamic>?> getCachedProductByBarcode(
     String barcode,
   ) async {
-    final db = await instance.database;
-    final rows = await db.query(
-      'product_cache',
-      where: 'barcode = ?',
-      whereArgs: [barcode],
-      limit: 1,
-    );
-    return rows.isNotEmpty ? rows.first : null;
+    await _ensureMemLoaded();
+    return _memByBarcode[barcode];
   }
 
-  /// Поиск товара по названию (LIKE) в кэше.
+  /// Поиск товара по названию в кэше — линейный проход по in-memory
+  /// списку в чистом Dart. Для каталога в несколько тысяч позиций это
+  /// занимает доли миллисекунды и не требует индекса, в отличие от
+  /// SQL `LIKE '%...%'`, который в принципе не может использовать
+  /// индекс (значение ищется в середине строки).
   Future<List<Map<String, dynamic>>> searchCachedProductsByName(
     String query,
   ) async {
-    final db = await instance.database;
-    return await db.query(
-      'product_cache',
-      where: 'name LIKE ?',
-      whereArgs: ['%$query%'],
-      orderBy: 'name ASC',
-      limit: 10,
-    );
+    await _ensureMemLoaded();
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return const [];
+
+    final matches =
+        _memProducts!
+            .where((p) => (p['name'] as String).toLowerCase().contains(q))
+            .toList()
+          ..sort(
+            (a, b) => (a['name'] as String).compareTo(b['name'] as String),
+          );
+    return matches.take(10).toList();
   }
 
   // ─── Кэш пользователей терминала ─────────────────────────────────────────
 
-  /// Сохраняет список продавцов. PIN-хэш вычисляется здесь же, если передан.
+  /// Сохраняет список продавцов, не трогая уже сохранённые PIN-хэши.
+  ///
+  /// Раньше метод полностью пересоздавал таблицу (delete + insert), что
+  /// обнуляло pin_hash для ВСЕХ продавцов при каждом обновлении списка —
+  /// включая тех, кто уже успешно логинился и должен иметь возможность
+  /// зайти по PIN офлайн. Из-за этого офлайн-вход мог "неожиданно"
+  /// переставать работать, стоило списку продавцов обновиться ещё раз
+  /// (например, при фоновой синхронизации). Теперь существующие
+  /// продавцы обновляются точечно (без изменения pin_hash), новые —
+  /// добавляются с пустым pin_hash, а уволенные/удалённые на сервере —
+  /// убираются из кэша.
   Future<void> cacheTerminalUsers(List<Map<String, dynamic>> users) async {
     final db = await instance.database;
-    final batch = db.batch();
-    batch.delete('terminal_users');
-    for (final u in users) {
-      batch.insert('terminal_users', {
-        'id': u['id'],
-        'username': u['username'] ?? '',
-        'role': u['role'] ?? 'seller',
-        'pin_hash': null, // PIN хранится только после успешного входа
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
-    }
-    await batch.commit(noResult: true);
+    await db.transaction((txn) async {
+      for (final u in users) {
+        final id = u['id'];
+        final existing = await txn.query(
+          'terminal_users',
+          where: 'id = ?',
+          whereArgs: [id],
+          limit: 1,
+        );
+        if (existing.isEmpty) {
+          await txn.insert('terminal_users', {
+            'id': id,
+            'username': u['username'] ?? '',
+            'role': u['role'] ?? 'seller',
+            'pin_hash': null, // PIN появится после первого успешного входа
+          });
+        } else {
+          await txn.update(
+            'terminal_users',
+            {'username': u['username'] ?? '', 'role': u['role'] ?? 'seller'},
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+        }
+      }
+
+      // Убираем из кэша тех, кого больше нет в свежем списке с сервера.
+      final ids = users.map((u) => u['id']).toList();
+      if (ids.isEmpty) {
+        await txn.delete('terminal_users');
+      } else {
+        final placeholders = List.filled(ids.length, '?').join(',');
+        await txn.delete(
+          'terminal_users',
+          where: 'id NOT IN ($placeholders)',
+          whereArgs: ids,
+        );
+      }
+    });
   }
 
   /// Сохраняет хэш PIN после успешного входа — для офлайн-проверки.

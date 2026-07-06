@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/data_refresh_service.dart';
 import 'package:retail_app/widgets/barcode_scanner.dart';
 
 class AddProductScreen extends StatefulWidget {
@@ -45,9 +46,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
     if (sellPrice < buyPrice) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Нархи фурӯш аз нархи харид камтар буда наметавонад!',
-          ),
+          content: Text('Нархи фурӯш аз нархи харид камтар буда наметавонад!'),
           backgroundColor: Colors.orange,
           duration: Duration(seconds: 3),
         ),
@@ -72,6 +71,11 @@ class _AddProductScreenState extends State<AddProductScreen> {
     setState(() => _loading = false);
 
     if (error == null) {
+      // Сообщаем складу (InventoryScreen), что каталог изменился — без
+      // этого новый товар был виден только после ручного pull-to-refresh,
+      // потому что список товаров кэшируется в состоянии экрана и не
+      // перечитывается сам по себе.
+      DataRefreshService.instance.notifyProductChanged();
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -160,7 +164,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      onChanged: (_) => setState(() {}), // обновить sell validator
+                      onChanged: (_) =>
+                          setState(() {}), // обновить sell validator
                       validator: (v) => _validatePrice(v, 'Нархи харид'),
                     ),
                   ),
@@ -218,7 +223,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
                         if (parsed < 0) {
                           return 'Миқдор манфӣ буда наметавонад';
                         }
-                        if (_unit == 'pcs' && parsed != parsed.truncateToDouble()) {
+                        if (_unit == 'pcs' &&
+                            parsed != parsed.truncateToDouble()) {
                           return 'Барои "дона" танҳо ададҳои бутун';
                         }
                         return null;

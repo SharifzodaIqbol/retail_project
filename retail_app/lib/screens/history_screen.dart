@@ -380,7 +380,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: 'Янгилаш',
+            tooltip: 'Навсозӣ',
             onPressed: () => _loadSales(reset: true),
           ),
           IconButton(

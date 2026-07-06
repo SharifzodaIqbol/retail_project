@@ -82,14 +82,21 @@ class ApiService {
               Uri.parse('$baseUrl/api/products/$barcode'),
               headers: await _getHeaders(),
             )
-            .timeout(const Duration(seconds: 10));
+            // Таймаут снижен с 10 до 3 секунд: это горячий путь кассы
+            // (сканирование штрихкода на каждый товар), и при реальном
+            // отсутствии сети/сервера продавец не должен ждать долго
+            // прежде чем сработает офлайн-фолбэк на локальный кэш.
+            .timeout(const Duration(seconds: 3));
         _checkSubscription(response.statusCode);
         if (response.statusCode == 200) {
           final json = jsonDecode(response.body);
           return Product.fromJson(json);
         }
-      } catch (_) {
-        // Сетевая ошибка — пробуем кэш
+      } catch (e) {
+        debugPrint('API ERROR: $e');
+        // Сетевая ошибка — сразу помечаем "нет сети", чтобы следующий
+        // скан/поиск не повторял тот же таймаут, а сразу шёл в кэш.
+        ConnectivityService.instance.markOffline();
       }
     }
 
@@ -121,12 +128,13 @@ class ApiService {
           final items = (body['data'] as List)
               .map((j) => Product.fromJson(j as Map<String, dynamic>))
               .toList();
-          // Кэшируем только первую страницу (свежий снимок склада)
-          if (page == 1) {
-            await _db.cacheProducts(
-              (body['data'] as List).cast<Map<String, dynamic>>(),
-            );
-          }
+          // Точечно освежаем в кэше только просмотренные товары — не
+          // затираем остальной офлайн-каталог и не ломаем его порядок.
+          // Полную пересборку кэша (весь каталог целиком, той же
+          // сортировкой, что и на сервере) делает refreshOfflineCache().
+          await _db.upsertCachedProducts(
+            (body['data'] as List).cast<Map<String, dynamic>>(),
+          );
           return PaginatedResult(
             data: items,
             total: body['total'] as int,
@@ -137,6 +145,7 @@ class ApiService {
         }
       } catch (_) {
         // Сетевая ошибка — пробуем кэш
+        ConnectivityService.instance.markOffline();
       }
     }
 
@@ -156,6 +165,68 @@ class ApiService {
   Future<List<Product>> getAllProducts() async {
     final result = await getProducts(page: 1, limit: 200);
     return result.data;
+  }
+
+  /// Полностью обновляет офлайн-кэш каталога товаров.
+  ///
+  /// Раньше в кэш попадала только первая страница (максимум 200 товаров),
+  /// поэтому если склад был больше — офлайн-режим показывал не весь
+  /// каталог. Кроме того, кэш сохранял порядок только той страницы,
+  /// которая была загружена последней, что и приводило к ощущению
+  /// "всё перемешано" в офлайне.
+  ///
+  /// Здесь мы последовательно обходим все страницы (как их отдаёт
+  /// сервер, т.е. в том же порядке ORDER BY stock ASC, что и в онлайне)
+  /// и один раз перезаписываем локальный кэш целиком — так порядок и
+  /// состав товаров в офлайне полностью совпадают с онлайн-режимом.
+  /// Ничего не делает, если нет сети — вызывается на старте и при
+  /// восстановлении связи через [SyncService].
+  Future<void> refreshOfflineCache() async {
+    if (!ConnectivityService.instance.isOnline) return;
+
+    const pageSize = 200;
+    final all = <Map<String, dynamic>>[];
+    try {
+      int page = 1;
+      int totalPages = 1;
+      do {
+        final uri = Uri.parse(
+          '$baseUrl/api/products',
+        ).replace(queryParameters: {'page': '$page', 'limit': '$pageSize'});
+        final response = await http
+            .get(uri, headers: await _getHeaders())
+            .timeout(const Duration(seconds: 15));
+        if (response.statusCode != 200) break;
+
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        final items = (body['data'] as List).cast<Map<String, dynamic>>();
+        all.addAll(items);
+
+        totalPages = (body['total_pages'] as num?)?.toInt() ?? 1;
+        page++;
+        // Защита от аномального total_pages — не уходим в бесконечный
+        // обход (10000 товаров более чем достаточно для офлайн-кэша).
+      } while (page <= totalPages && page <= 50);
+
+      if (all.isNotEmpty || page > 1) {
+        await _db.cacheProducts(all);
+      }
+    } catch (_) {
+      // Сетевая ошибка в процессе обхода страниц — оставляем то, что
+      // успели скачать в предыдущий раз; частичного/битого кэша не будет,
+      // т.к. cacheProducts перезаписывает всё одним batch-ом.
+    }
+
+    // Заодно освежаем кэш продавцов терминала (для офлайн-входа по PIN),
+    // чтобы он не зависел от того, заходил ли кто-то на экран терминала
+    // онлайн после последнего обновления.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final companyId = prefs.getInt('company_id') ?? 0;
+      if (companyId != 0) {
+        await getTerminalUsers(companyId);
+      }
+    } catch (_) {}
   }
 
   /// Добавляет товар. Возвращает null при успехе, иначе — строку с ошибкой.
@@ -288,11 +359,18 @@ class ApiService {
 
   Future<bool> sendSale(Map<String, dynamic> saleData) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/api/sales'),
-        headers: await _getHeaders(),
-        body: jsonEncode(saleData),
-      );
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/sales'),
+            headers: await _getHeaders(),
+            body: jsonEncode(saleData),
+          )
+          // Важно: без таймаута телефон, "формально" подключённый к Wi-Fi
+          // без реального интернета (например, роутер без аплинка или
+          // captive-портал), мог зависать на системном таймауте на
+          // десятки секунд прямо на экране оплаты, вместо быстрого
+          // перехода в офлайн-режим и сохранения чека локально.
+          .timeout(const Duration(seconds: 8));
       _checkSubscription(response.statusCode);
       if (response.statusCode == 200) {
         DataRefreshService.instance.notifySaleChanged();
@@ -636,13 +714,22 @@ class ApiService {
               ),
               headers: await _getHeaders(),
             )
-            .timeout(const Duration(seconds: 5));
+            // Таймаут снижен с 5 до 2 секунд: это самый "горячий" путь —
+            // запрос уходит на каждое нажатие клавиши (после debounce).
+            // Если сети реально нет, продавец не должен ждать по 5 сек
+            // на каждую букву прежде чем увидит результат из кэша.
+            .timeout(const Duration(seconds: 2));
         _checkSubscription(response.statusCode);
         if (response.statusCode == 200) {
           final List<dynamic> data = jsonDecode(response.body);
           return data.map((json) => Product.fromJson(json)).toList();
         }
-      } catch (_) {}
+      } catch (_) {
+        // Сетевая ошибка — сразу помечаем "нет сети". Иначе следующая
+        // буква, введённая продавцом, снова наткнётся на тот же таймаут
+        // до срабатывания фонового пробника ConnectivityService.
+        ConnectivityService.instance.markOffline();
+      }
     }
 
     // Офлайн — ищем в кэше
