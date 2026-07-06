@@ -72,6 +72,15 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	r.POST("/register", h.register)
 	r.POST("/login", h.login)
 
+	// Лёгкий health-check без авторизации и без обращения к БД —
+	// используется мобильным клиентом (ConnectivityService) для проверки
+	// РЕАЛЬНОЙ достижимости сервера, а не только наличия сетевого
+	// интерфейса (Wi-Fi/моб. сеть может быть подключена, но без
+	// доступа к интернету/серверу — например, локальный роутер без WAN).
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+
 	// ─── Терминальный режим (публичные, без JWT) ───────────────────────────────
 	r.GET("/terminal/users", h.getTerminalUsers)
 	r.POST("/terminal/pin-login", h.pinLogin)
