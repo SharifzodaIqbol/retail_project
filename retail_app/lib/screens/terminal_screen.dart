@@ -118,6 +118,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       backgroundColor: const Color(0xFF1A1F36),
       body: SafeArea(
         child: Column(
@@ -170,7 +171,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
                           ),
                           SizedBox(width: 6),
                           Text(
-                            'Нигоҳ дошта истед. барои баромадан',
+                            'Нигоҳ дошта истед барои баромадан',
                             style: TextStyle(
                               color: Colors.white54,
                               fontSize: 12,

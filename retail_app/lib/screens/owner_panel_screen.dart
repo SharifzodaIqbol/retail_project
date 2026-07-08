@@ -19,6 +19,7 @@ class OwnerPanelScreen extends StatefulWidget {
 class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
   final _api = ApiService();
   List<dynamic> _users = [];
+  List<dynamic> _shops = [];
   bool _loading = true;
   String? _ownerUsername;
   bool _tgLinked = false;
@@ -59,16 +60,95 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
     final prefs = await SharedPreferences.getInstance();
     _ownerUsername = prefs.getString('username');
 
-    final users = await _api.getUsers();
+    final results = await Future.wait([_api.getUsers(), _api.getShops()]);
+    final users = results[0];
+    final shops = results[1];
     final ownerData = users.firstWhere(
       (u) => u['role'] == 'owner',
       orElse: () => {},
     );
     setState(() {
       _users = users;
+      _shops = shops;
       _tgLinked = (ownerData['tg_chat_id'] ?? 0) != 0;
       _loading = false;
     });
+  }
+
+  /// Назначить/снять магазин у сотрудника прямо из списка сотрудников.
+  Future<void> _reassignShop(Map<String, dynamic> user) async {
+    final currentShopId = user['shop_id'] as int?;
+    final selected = await showModalBottomSheet<int?>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Text(
+                'Мағоза барои "${user['username']}"',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(Icons.block, color: Colors.grey),
+                title: const Text('Бе мағоза'),
+                trailing: currentShopId == null
+                    ? const Icon(Icons.check, color: Color(0xFF4F6EF7))
+                    : null,
+                onTap: () => Navigator.pop(ctx, -1),
+              ),
+              if (_shops.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'Ҳанӯз ягон мағоза илова накардаед',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+              ..._shops.map((shop) {
+                final id = shop['id'] as int;
+                return ListTile(
+                  leading: const Icon(
+                    Icons.storefront,
+                    color: Color(0xFF4F6EF7),
+                  ),
+                  title: Text(shop['name'] ?? ''),
+                  trailing: currentShopId == id
+                      ? const Icon(Icons.check, color: Color(0xFF4F6EF7))
+                      : null,
+                  onTap: () => Navigator.pop(ctx, id),
+                );
+              }),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (selected == null) return; // ничего не выбрано / закрыли
+    final newShopId = selected == -1 ? null : selected;
+    final ok = await _api.assignUserShop(user['id'] as int, newShopId);
+    if (!mounted) return;
+    if (ok) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Мағоза навсозӣ шуд')));
+      _load();
+    } else {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Хатогӣ ҳангоми навсозӣ')));
+    }
   }
 
   // ─── Telegram ────────────────────────────────────────────────────────────
@@ -310,6 +390,7 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
   void _showAddUserDialog() {
     final usernameCtrl = TextEditingController();
     final pinCtrl = TextEditingController();
+    int? selectedShopId;
 
     showDialog(
       context: context,
@@ -347,6 +428,29 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                         'Фурӯшанда инро ҳангоми ворид шудан ворид мекунад',
                   ),
                 ),
+                if (_shops.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int?>(
+                    value: selectedShopId,
+                    decoration: const InputDecoration(
+                      labelText: 'Мағоза (интихобӣ)',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<int?>(
+                        value: null,
+                        child: Text('Бе мағоза'),
+                      ),
+                      ..._shops.map(
+                        (shop) => DropdownMenuItem<int?>(
+                          value: shop['id'] as int,
+                          child: Text(shop['name'] ?? ''),
+                        ),
+                      ),
+                    ],
+                    onChanged: (v) => setDialogState(() => selectedShopId = v),
+                  ),
+                ],
               ],
             ),
           ),
@@ -373,6 +477,7 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                   '', // пароль пустой для seller'а
                   'seller',
                   pin: pinCtrl.text,
+                  shopId: selectedShopId,
                 );
                 if (!mounted) return;
                 if (ok) {
@@ -603,6 +708,9 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                         onDelete: u['role'] != 'owner'
                             ? () => _deleteUser(u['id'], u['username'])
                             : null,
+                        onReassignShop: u['role'] != 'owner'
+                            ? () => _reassignShop(u)
+                            : null,
                       ),
                     ),
                 ],
@@ -707,14 +815,21 @@ class _UserTile extends StatelessWidget {
   final Map<String, dynamic> user;
   final VoidCallback onSetPin;
   final VoidCallback? onDelete;
+  final VoidCallback? onReassignShop;
 
-  const _UserTile({required this.user, required this.onSetPin, this.onDelete});
+  const _UserTile({
+    required this.user,
+    required this.onSetPin,
+    this.onDelete,
+    this.onReassignShop,
+  });
 
   @override
   Widget build(BuildContext context) {
     final isOwner = user['role'] == 'owner';
     final hasPin = user['has_pin'] == true;
     final hasTg = (user['tg_chat_id'] ?? 0) != 0;
+    final shopName = user['shop_name'] as String?;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -786,6 +901,57 @@ class _UserTile extends StatelessWidget {
                     ],
                   ],
                 ),
+                if (onReassignShop != null) ...[
+                  const SizedBox(height: 6),
+                  GestureDetector(
+                    onTap: onReassignShop,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: (shopName == null || shopName.isEmpty)
+                            ? Colors.grey.withOpacity(0.1)
+                            : const Color(0xFF4F6EF7).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.storefront,
+                            size: 12,
+                            color: (shopName == null || shopName.isEmpty)
+                                ? Colors.grey[600]
+                                : const Color(0xFF4F6EF7),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            (shopName == null || shopName.isEmpty)
+                                ? 'Бе мағоза'
+                                : shopName,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: (shopName == null || shopName.isEmpty)
+                                  ? Colors.grey[600]
+                                  : const Color(0xFF4F6EF7),
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          Icon(
+                            Icons.edit,
+                            size: 11,
+                            color: (shopName == null || shopName.isEmpty)
+                                ? Colors.grey[500]
+                                : const Color(0xFF4F6EF7),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

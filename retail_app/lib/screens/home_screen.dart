@@ -35,7 +35,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _syncOfflineSales();
-    _loadUserInfo(); // Вызов метода загрузки пользователя
+    _loadUserInfo();
 
     // Запрашиваем фокус сразу после того, как кадр построится
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -43,7 +43,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // Метод загрузки информации о пользователе (исправляет вашу ошибку)
   Future<void> _loadUserInfo() async {
     try {
       final username = await _authService.getUsername() ?? '';
@@ -57,7 +56,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Метод для безопасного возврата фокуса сканеру
   void _requestScannerFocus() {
     if (!_scannerFocusNode.hasFocus) {
       FocusScope.of(context).requestFocus(_scannerFocusNode);
@@ -95,7 +93,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _promptWeightAndAdd(product);
         } else {
           Provider.of<CartProvider>(context, listen: false).addProduct(product);
-          _requestScannerFocus(); // Держим фокус после добавления товара
+          _requestScannerFocus();
         }
       }
     } else {
@@ -148,7 +146,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _searchController.clear();
     setState(() => _suggestions = []);
 
-    // Скрываем клавиатуру поиска и возвращаем фокус сканеру
     FocusManager.instance.primaryFocus?.unfocus();
     _requestScannerFocus();
   }
@@ -162,7 +159,6 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (ctx) => _PaymentDialog(totalAmount: cart.totalAmount),
     );
 
-    // После закрытия диалога оплаты возвращаем фокус
     _requestScannerFocus();
 
     if (confirm != true) return;
@@ -183,8 +179,6 @@ class _HomeScreenState extends State<HomeScreen> {
     bool success = await _apiService.createSale(saleData);
 
     if (success) {
-      // Сообщаем всем подписанным экранам (склад, история и т.д.),
-      // что нужно перезагрузить данные с сервера.
       DataRefreshService.instance.notifySaleChanged();
       DataRefreshService.instance.notifyProductChanged();
     }
@@ -212,9 +206,6 @@ class _HomeScreenState extends State<HomeScreen> {
     cart.clearCart();
   }
 
-  /// Запрашивает у продавца вес товара вручную (для unit == 'kg').
-  /// Введённый вес добавляется к товару в корзине (если товар уже есть —
-  /// суммируется с текущим количеством).
   void _promptWeightAndAdd(Product product) {
     final controller = TextEditingController();
     showDialog(
@@ -303,7 +294,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     ).then((_) {
-      // Когда диалог изменения количества закрылся, возвращаем фокус на сканер
       _requestScannerFocus();
     });
   }
@@ -356,7 +346,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final cart = Provider.of<CartProvider>(context);
 
-    // Клик в любом пустом месте экрана будет возвращать фокус сканеру
     return GestureDetector(
       onTap: _requestScannerFocus,
       child: KeyboardListener(
@@ -364,6 +353,8 @@ class _HomeScreenState extends State<HomeScreen> {
         autofocus: true,
         onKeyEvent: _handleHardwareKey,
         child: Scaffold(
+          resizeToAvoidBottomInset:
+              false, // Игнорируем сжатие экрана клавиатурой
           backgroundColor: const Color(0xFFF5F7FA),
           appBar: AppBar(
             title: Column(
@@ -394,9 +385,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (_) => AddProductScreen()),
-                  ).then(
-                    (_) => _requestScannerFocus(),
-                  ); // Возвращаем фокус после закрытия экрана добавления
+                  ).then((_) => _requestScannerFocus());
                 },
               ),
               if (cart.items.isNotEmpty)
@@ -428,14 +417,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
             ],
           ),
-          body: Column(
+          body: Stack(
             children: [
-              Container(
-                color: Colors.white,
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                child: Column(
-                  children: [
-                    TextField(
+              // СЛОЙ 1: Основное содержимое (Поиск + Список Корзины + Панель оплаты)
+              Column(
+                children: [
+                  Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    child: TextField(
                       controller: _searchController,
                       textInputAction: TextInputAction.search,
                       decoration: InputDecoration(
@@ -455,7 +445,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             if (code != null) {
                               _processScannedBarcode(code);
                             }
-                            _requestScannerFocus(); // Возвращаем фокус после камеры
+                            _requestScannerFocus();
                           },
                         ),
                         suffixIcon: IconButton(
@@ -472,317 +462,322 @@ class _HomeScreenState extends State<HomeScreen> {
                       onChanged: _onSearchChanged,
                       onSubmitted: (_) => _onManualSearchSubmit(),
                     ),
-                    if (_suggestions.isNotEmpty)
-                      Container(
-                        margin: const EdgeInsets.only(top: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        constraints: const BoxConstraints(maxHeight: 220),
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: _suggestions.length,
-                          itemBuilder: (ctx, i) {
-                            final p = _suggestions[i];
-                            return ListTile(
-                              title: Text(p.name),
-                              subtitle: Text(
-                                '${p.sellPrice.toStringAsFixed(2)} сомонӣ. ${p.stock} ${p.unitLabel}.',
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                              leading: Container(
-                                width: 36,
-                                height: 36,
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFF4F6EF7,
-                                  ).withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(8),
+                  ),
+                  Expanded(
+                    child: cart.items.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.shopping_cart_outlined,
+                                  size: 80,
+                                  color: Colors.grey[300],
                                 ),
-                                child: const Icon(
-                                  Icons.shopping_bag,
-                                  color: Color(0xFF4F6EF7),
-                                  size: 18,
-                                ),
-                              ),
-                              onTap: () {
-                                setState(() {
-                                  _suggestions = [];
-                                  _searchController.clear();
-                                });
-                                if (p.unit == 'kg') {
-                                  _promptWeightAndAdd(p);
-                                } else {
-                                  cart.addProduct(p);
-                                  _requestScannerFocus(); // Возвращаем фокус после клика по списку
-                                }
-                              },
-                            );
-                          },
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: cart.items.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.shopping_cart_outlined,
-                              size: 80,
-                              color: Colors.grey[300],
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Сабад холӣ аст',
-                              style: TextStyle(
-                                color: Colors.grey[400],
-                                fontSize: 18,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Штрих-кодро дар вақти дилхоҳ скан кунед.',
-                              style: TextStyle(
-                                color: Colors.grey[400],
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                        itemCount: cart.items.length,
-                        itemBuilder: (context, index) {
-                          final item = cart.items.values.toList()[index];
-
-                          return Dismissible(
-                            key: Key(item.product.id.toString()),
-                            direction: DismissDirection.endToStart,
-                            background: Container(
-                              alignment: Alignment.centerRight,
-                              padding: const EdgeInsets.only(right: 20),
-                              decoration: BoxDecoration(
-                                color: Colors.red,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Icon(
-                                Icons.delete,
-                                color: Colors.white,
-                              ),
-                            ),
-                            onDismissed: (_) {
-                              cart.deleteProduct(item.product.id);
-                              _requestScannerFocus();
-                            },
-                            child: Container(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(12),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.04),
-                                    blurRadius: 8,
+                                const SizedBox(height: 16),
+                                Text(
+                                  'Сабад холӣ аст',
+                                  style: TextStyle(
+                                    color: Colors.grey[400],
+                                    fontSize: 18,
                                   ),
-                                ],
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
                                 ),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            item.product.name,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                          Text(
-                                            '${item.product.sellPrice.toStringAsFixed(2)} сомонӣ',
-                                            style: const TextStyle(
-                                              color: Colors.grey,
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                        ],
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Штрих-кодро дар вақти дилхоҳ скан кунед.',
+                                  style: TextStyle(
+                                    color: Colors.grey[400],
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                            itemCount: cart.items.length,
+                            itemBuilder: (context, index) {
+                              final item = cart.items.values.toList()[index];
+
+                              return Dismissible(
+                                key: Key(item.product.id.toString()),
+                                direction: DismissDirection.endToStart,
+                                background: Container(
+                                  alignment: Alignment.centerRight,
+                                  padding: const EdgeInsets.only(right: 20),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(
+                                    Icons.delete,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                onDismissed: (_) {
+                                  cart.deleteProduct(item.product.id);
+                                  _requestScannerFocus();
+                                },
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.04),
+                                        blurRadius: 8,
                                       ),
+                                    ],
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
                                     ),
-                                    Row(
+                                    child: Row(
                                       children: [
-                                        IconButton(
-                                          icon: const Icon(
-                                            Icons.remove_circle_outline,
-                                            color: Colors.red,
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                item.product.name,
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                              Text(
+                                                '${item.product.sellPrice.toStringAsFixed(2)} сомонӣ',
+                                                style: const TextStyle(
+                                                  color: Colors.grey,
+                                                  fontSize: 13,
+                                                ),
+                                              ),
+                                            ],
                                           ),
-                                          onPressed: () {
-                                            if (item.product.unit == 'kg') {
-                                              // Для весовых товаров нет
-                                              // фиксированного шага — убираем строку целиком,
-                                              // точный вес правится тапом по количеству.
-                                              cart.deleteProduct(
-                                                item.product.id,
-                                              );
-                                            } else {
-                                              cart.removeOneItem(
-                                                item.product.id,
-                                              );
-                                            }
-                                            _requestScannerFocus();
-                                          },
                                         ),
-                                        GestureDetector(
-                                          onTap: () => _showQuantityDialog(
-                                            context,
-                                            cart,
-                                            item,
-                                          ),
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                              vertical: 6,
+                                        Row(
+                                          children: [
+                                            IconButton(
+                                              icon: const Icon(
+                                                Icons.remove_circle_outline,
+                                                color: Colors.red,
+                                              ),
+                                              onPressed: () {
+                                                if (item.product.unit == 'kg') {
+                                                  cart.deleteProduct(
+                                                    item.product.id,
+                                                  );
+                                                } else {
+                                                  cart.removeOneItem(
+                                                    item.product.id,
+                                                  );
+                                                }
+                                                _requestScannerFocus();
+                                              },
                                             ),
-                                            decoration: BoxDecoration(
-                                              color: const Color(
-                                                0xFF4F6EF7,
-                                              ).withOpacity(0.1),
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                            ),
-                                            child: Text(
-                                              item.product.unit == 'kg'
-                                                  ? '${item.quantity.toStringAsFixed(item.quantity.truncateToDouble() == item.quantity ? 0 : 2)} кг'
-                                                  : '${item.quantity.toStringAsFixed(0)}',
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.w700,
-                                                color: Color(0xFF4F6EF7),
-                                                fontSize: 16,
+                                            GestureDetector(
+                                              onTap: () => _showQuantityDialog(
+                                                context,
+                                                cart,
+                                                item,
+                                              ),
+                                              child: Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 12,
+                                                      vertical: 6,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: const Color(
+                                                    0xFF4F6EF7,
+                                                  ).withOpacity(0.1),
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                ),
+                                                child: Text(
+                                                  item.product.unit == 'kg'
+                                                      ? '${item.quantity.toStringAsFixed(item.quantity.truncateToDouble() == item.quantity ? 0 : 2)} кг'
+                                                      : '${item.quantity.toStringAsFixed(0)}',
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.w700,
+                                                    color: Color(0xFF4F6EF7),
+                                                    fontSize: 16,
+                                                  ),
+                                                ),
                                               ),
                                             ),
-                                          ),
+                                            IconButton(
+                                              icon: const Icon(
+                                                Icons.add_circle_outline,
+                                                color: Color(0xFF27AE60),
+                                              ),
+                                              onPressed: () {
+                                                if (item.product.unit == 'kg') {
+                                                  _promptWeightAndAdd(
+                                                    item.product,
+                                                  );
+                                                } else {
+                                                  cart.addProduct(item.product);
+                                                  _requestScannerFocus();
+                                                }
+                                              },
+                                            ),
+                                          ],
                                         ),
-                                        IconButton(
-                                          icon: const Icon(
-                                            Icons.add_circle_outline,
-                                            color: Color(0xFF27AE60),
+                                        SizedBox(
+                                          width: 80,
+                                          child: Text(
+                                            (item.product.sellPrice *
+                                                    item.quantity)
+                                                .toStringAsFixed(2),
+                                            textAlign: TextAlign.right,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 15,
+                                            ),
                                           ),
-                                          onPressed: () {
-                                            if (item.product.unit == 'kg') {
-                                              // Просим продавца ввести вес вручную,
-                                              // а не молча прибавляем фиксированный шаг.
-                                              _promptWeightAndAdd(item.product);
-                                            } else {
-                                              cart.addProduct(item.product);
-                                              _requestScannerFocus();
-                                            }
-                                          },
                                         ),
                                       ],
                                     ),
-                                    SizedBox(
-                                      width: 80,
-                                      child: Text(
-                                        (item.product.sellPrice * item.quantity)
-                                            .toStringAsFixed(2),
-                                        textAlign: TextAlign.right,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 15,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                                  ),
                                 ),
+                              );
+                            },
+                          ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.08),
+                          blurRadius: 20,
+                          offset: const Offset(0, -4),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'ДАР МАҶМӮЪ',
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 1,
                               ),
                             ),
-                          );
-                        },
-                      ),
-              ),
-              Container(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.08),
-                      blurRadius: 20,
-                      offset: const Offset(0, -4),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text(
-                          'ДАР МАҶМӮЪ',
-                          style: TextStyle(
-                            color: Colors.grey,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 1,
-                          ),
+                            Text(
+                              '${cart.totalAmount.toStringAsFixed(2)} сомонӣ',
+                              style: const TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF1A1A2E),
+                              ),
+                            ),
+                          ],
                         ),
-                        Text(
-                          '${cart.totalAmount.toStringAsFixed(2)} сомонӣ',
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF1A1A2E),
+                        const SizedBox(width: 20),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: cart.items.isEmpty
+                                ? null
+                                : () => _checkout(context),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF27AE60),
+                              disabledBackgroundColor: Colors.grey[200],
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: const Text(
+                              'ПАРДОХТ',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1,
+                              ),
+                            ),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(width: 20),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: cart.items.isEmpty
-                            ? null
-                            : () => _checkout(context),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF27AE60),
-                          disabledBackgroundColor: Colors.grey[200],
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: const Text(
-                          'ПАРДОХТ',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
+
+              // СЛОЙ 2: Абсолютно позиционированное выпадающее окно подсказок поиска
+              if (_suggestions.isNotEmpty)
+                Positioned(
+                  top:
+                      68, // Располагаем ровно под TextField (высота паддингов верхнего контейнера)
+                  left: 16,
+                  right: 16,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.15),
+                          blurRadius: 12,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    constraints: const BoxConstraints(maxHeight: 250),
+                    child: ListView.builder(
+                      padding: EdgeInsets.zero,
+                      shrinkWrap: true,
+                      itemCount: _suggestions.length,
+                      itemBuilder: (ctx, i) {
+                        final p = _suggestions[i];
+                        return ListTile(
+                          title: Text(p.name),
+                          subtitle: Text(
+                            '${p.sellPrice.toStringAsFixed(2)} сомонӣ. ${p.stock} ${p.unitLabel}.',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          leading: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF4F6EF7).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.shopping_bag,
+                              color: Color(0xFF4F6EF7),
+                              size: 18,
+                            ),
+                          ),
+                          onTap: () {
+                            setState(() {
+                              _suggestions = [];
+                              _searchController.clear();
+                            });
+                            if (p.unit == 'kg') {
+                              _promptWeightAndAdd(p);
+                            } else {
+                              cart.addProduct(p);
+                              _requestScannerFocus();
+                            }
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -791,21 +786,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-/// Диалог подтверждения оплаты.
-/// Позволяет ввести сумму, полученную от покупателя наличными,
-/// и автоматически показывает сдачу — без калькулятора.
 class _PaymentDialog extends StatefulWidget {
   final double totalAmount;
-
   const _PaymentDialog({required this.totalAmount});
-
   @override
   State<_PaymentDialog> createState() => _PaymentDialogState();
 }
 
 class _PaymentDialogState extends State<_PaymentDialog> {
   final TextEditingController _receivedCtrl = TextEditingController();
-
   static const List<int> _quickBills = [10, 20, 50, 100, 200, 500];
 
   @override
@@ -865,7 +854,6 @@ class _PaymentDialogState extends State<_PaymentDialog> {
               ),
             ),
             const SizedBox(height: 18),
-
             const Text(
               'Аз харидор гирифта шуд (нақд)',
               style: TextStyle(color: Colors.grey, fontSize: 13),
@@ -878,20 +866,14 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                 decimal: true,
               ),
               onChanged: (_) => setState(() {}),
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
               decoration: InputDecoration(
                 hintText: '0.00',
-                errorText: _isInsufficient
-                    ? 'Маблағ аз чек камтар аст'
-                    : null,
+                errorText: _isInsufficient ? 'Маблағ аз чек камтар аст' : null,
                 suffixIcon: _receivedCtrl.text.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.clear, size: 18),
-                        onPressed: () =>
-                            setState(() => _receivedCtrl.clear()),
+                        onPressed: () => setState(() => _receivedCtrl.clear()),
                       )
                     : null,
                 border: OutlineInputBorder(
@@ -900,8 +882,6 @@ class _PaymentDialogState extends State<_PaymentDialog> {
               ),
             ),
             const SizedBox(height: 10),
-
-            // Быстрые номиналы
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -923,16 +903,10 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                   )
                   .toList(),
             ),
-
             const SizedBox(height: 18),
-
-            // Карточка сдачи / подсказка
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 12,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
                 color: _change != null
                     ? Colors.green.shade50
@@ -979,10 +953,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
           onPressed: _isInsufficient
               ? null
               : () => Navigator.pop(context, true),
-          child: const Text(
-            'Пардохт',
-            style: TextStyle(color: Colors.white),
-          ),
+          child: const Text('Пардохт', style: TextStyle(color: Colors.white)),
         ),
       ],
     );
