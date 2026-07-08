@@ -36,6 +36,18 @@ func (r *ShopRepository) GetAllByCompany(ctx context.Context, companyID int) ([]
 	return shops, nil
 }
 
+// BelongsToCompany — проверяет, что магазин с данным id принадлежит компании.
+// Используется при назначении сотрудника на магазин, чтобы владелец одной
+// компании не мог назначить сотрудника на магазин чужой компании.
+func (r *ShopRepository) BelongsToCompany(ctx context.Context, shopID int, companyID int) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM shops WHERE id = $1 AND company_id = $2)`,
+		shopID, companyID,
+	).Scan(&exists)
+	return exists, err
+}
+
 func (r *ShopRepository) Create(ctx context.Context, companyID int, name string) (*domain.Shop, error) {
 	var s domain.Shop
 	err := r.db.QueryRow(ctx,

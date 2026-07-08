@@ -18,6 +18,22 @@ type Shop struct {
 	Name      string `json:"name"`
 }
 
+// ShopSummary — сводка по одному магазину за период: используется для
+// экрана "Все магазины", где владелец сравнивает магазины между собой.
+type ShopSummary struct {
+	ShopID     *int    `json:"shop_id"`
+	ShopName   string  `json:"shop_name"`
+	Revenue    float64 `json:"revenue"`
+	Profit     float64 `json:"profit"`
+	SalesCount int     `json:"sales_count"`
+	AvgCheck   float64 `json:"avg_check"`
+}
+
+// AssignShopRequest — назначить (или снять) магазин сотруднику
+type AssignShopRequest struct {
+	ShopID *int `json:"shop_id"`
+}
+
 type RegisterCompanyRequest struct {
 	CompanyName string `json:"company_name" binding:"required"`
 	Username    string `json:"username" binding:"required"`
@@ -80,6 +96,7 @@ type Sale struct {
 	ID           int     `json:"id"`
 	SellerID     int     `json:"seller_id"`
 	SellerName   string  `json:"seller_name,omitempty"`
+	ShopID       *int    `json:"shop_id,omitempty"`
 	TotalAmount  float64 `json:"total_amount"`
 	IsCanceled   bool    `json:"is_canceled"`
 	CancelReason *string `json:"cancel_reason"`
@@ -95,6 +112,8 @@ type User struct {
 	Role         string `json:"role"`
 	TgChatID     int64  `json:"tg_chat_id"`
 	HasPin       bool   `json:"has_pin"` // только для UI: есть ли PIN
+	ShopID       *int   `json:"shop_id,omitempty"`
+	ShopName     string `json:"shop_name,omitempty"`
 }
 
 type LoginRequest struct {
@@ -120,6 +139,7 @@ type CreateUserRequest struct {
 	Password string `json:"password"`
 	Role     string `json:"role" binding:"required"`
 	Pin      string `json:"pin"`
+	ShopID   *int   `json:"shop_id"`
 }
 
 // CreateShopRequest — создать новый магазин внутри компании
