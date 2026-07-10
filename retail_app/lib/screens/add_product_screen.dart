@@ -45,9 +45,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
     if (sellPrice < buyPrice) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Нархи фурӯш аз нархи харид камтар буда наметавонад!',
-          ),
+          content: Text('Нархи фурӯш аз нархи харид камтар буда наметавонад!'),
           backgroundColor: Colors.orange,
           duration: Duration(seconds: 3),
         ),
@@ -122,7 +120,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
               TextFormField(
                 controller: _barcodeController,
                 decoration: InputDecoration(
-                  labelText: 'Штрихкод',
+                  labelText:
+                      'Штрихкод (ихтиёрӣ)', // Можно добавить надпись "необязательно"
                   prefixIcon: const Icon(Icons.qr_code),
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.camera_alt, color: Colors.blue),
@@ -139,12 +138,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
                     },
                   ),
                 ),
-                validator: (v) {
-                  if (v == null || v.trim().isEmpty) {
-                    return 'Скан кунед ё кодро дохил кунед';
-                  }
-                  return null;
-                },
+                // Валидатор удален или возвращает null, поэтому ругаться не будет
               ),
               const SizedBox(height: 12),
               Row(
@@ -160,7 +154,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
-                      onChanged: (_) => setState(() {}), // обновить sell validator
+                      onChanged: (_) =>
+                          setState(() {}), // обновить sell validator
                       validator: (v) => _validatePrice(v, 'Нархи харид'),
                     ),
                   ),
@@ -218,7 +213,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
                         if (parsed < 0) {
                           return 'Миқдор манфӣ буда наметавонад';
                         }
-                        if (_unit == 'pcs' && parsed != parsed.truncateToDouble()) {
+                        if (_unit == 'pcs' &&
+                            parsed != parsed.truncateToDouble()) {
                           return 'Барои "дона" танҳо ададҳои бутун';
                         }
                         return null;

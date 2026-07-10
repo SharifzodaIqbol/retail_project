@@ -11,8 +11,10 @@ import 'screens/history_screen.dart';
 import 'screens/terminal_screen.dart';
 import 'screens/owner_panel_screen.dart';
 import 'screens/debtors_screen.dart';
+import 'screens/create_first_shop_screen.dart';
 import 'services/api_service.dart';
 import 'services/connectivity_service.dart';
+import 'services/sync_service.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
@@ -22,6 +24,10 @@ void main() async {
     databaseFactory = databaseFactoryFfiWeb;
   }
   await ConnectivityService.instance.init();
+  // Живёт на уровне всего приложения: как только связь появляется —
+  // неотправленные чеки и каталог товаров синхронизируются сами,
+  // независимо от того, какой экран сейчас открыт у продавца.
+  SyncService.instance.start();
   runApp(
     MultiProvider(
       providers: [ChangeNotifierProvider(create: (_) => CartProvider())],
@@ -48,25 +54,26 @@ class RetailApp extends StatelessWidget {
         fontFamily: 'Inter',
         useMaterial3: true,
       ),
-      home: const _Bootstrapper(),
+      home: const AppBootstrapper(),
     );
   }
 }
 
-class _Bootstrapper extends StatefulWidget {
-  const _Bootstrapper();
+class AppBootstrapper extends StatefulWidget {
+  const AppBootstrapper({super.key});
 
   @override
-  State<_Bootstrapper> createState() => _BootstrapperState();
+  State<AppBootstrapper> createState() => _AppBootstrapperState();
 }
 
-class _BootstrapperState extends State<_Bootstrapper> {
+class _AppBootstrapperState extends State<AppBootstrapper> {
   bool _checking = true;
   bool _loggedIn = false;
   bool _terminalMode = false;
   String _role = '';
   int _companyId = 0;
   String _companyName = '';
+  bool _needsShopSetup = false;
 
   @override
   void initState() {
@@ -81,6 +88,7 @@ class _BootstrapperState extends State<_Bootstrapper> {
     final terminalMode = prefs.getBool('terminal_mode') ?? false;
     final companyId = prefs.getInt('company_id') ?? 0;
     final companyName = prefs.getString('company_name') ?? '';
+    final needsShopSetup = prefs.getBool('needs_shop_setup') ?? false;
 
     setState(() {
       _loggedIn = token.isNotEmpty;
@@ -88,6 +96,7 @@ class _BootstrapperState extends State<_Bootstrapper> {
       _terminalMode = terminalMode;
       _companyId = companyId;
       _companyName = companyName;
+      _needsShopSetup = needsShopSetup;
       _checking = false;
     });
   }
@@ -96,12 +105,18 @@ class _BootstrapperState extends State<_Bootstrapper> {
     final prefs = await SharedPreferences.getInstance();
     final companyId = prefs.getInt('company_id') ?? 0;
     final companyName = prefs.getString('company_name') ?? '';
+    final needsShopSetup = prefs.getBool('needs_shop_setup') ?? false;
     setState(() {
       _loggedIn = true;
       _role = role;
       _companyId = companyId;
       _companyName = companyName;
+      _needsShopSetup = needsShopSetup;
     });
+    // Сразу после входа прогреваем офлайн-кэш целиком, не дожидаясь
+    // первого фонового цикла — так офлайн-режим готов с первой минуты
+    // работы, а не только через ~45 секунд.
+    SyncService.instance.syncNow();
   }
 
   void _onEnterTerminal() {
@@ -148,6 +163,10 @@ class _BootstrapperState extends State<_Bootstrapper> {
 
     if (!_loggedIn) {
       return LoginScreen(onLogin: _onLogin);
+    }
+
+    if (_role == 'owner' && _needsShopSetup && !_terminalMode) {
+      return CreateFirstShopScreen(onDone: _checkAuth);
     }
 
     if (_terminalMode && _role == 'owner') {

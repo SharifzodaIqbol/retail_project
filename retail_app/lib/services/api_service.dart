@@ -6,8 +6,6 @@ import 'package:retail_app/helpers/database_helper.dart';
 import 'package:retail_app/services/connectivity_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'data_refresh_service.dart';
-import 'connectivity_service.dart';
-import '../helpers/database_helper.dart';
 import '../models/product.dart';
 import '../screens/subscription_expired_screen.dart';
 
@@ -233,6 +231,9 @@ class ApiService {
 
   /// Добавляет товар. Возвращает null при успехе, иначе — строку с ошибкой.
   Future<String?> addProduct(Map<String, dynamic> productData) async {
+    if (productData['barcode'] == '') {
+      productData['barcode'] = null;
+    }
     try {
       final response = await http
           .post(
@@ -424,11 +425,10 @@ class ApiService {
 
   // ─── Аналитика ───────────────────────────────────────────────────────────
 
-  Future<List<dynamic>> getTopProducts({int limit = 5, int? shopId}) async {
+  Future<List<dynamic>> getTopProducts({int limit = 5}) async {
     try {
-      final shopParam = shopId != null ? '&shop_id=$shopId' : '';
       final response = await http.get(
-        Uri.parse('$baseUrl/api/analytics/top-products?limit=$limit$shopParam'),
+        Uri.parse('$baseUrl/api/analytics/top-products?limit=$limit'),
         headers: await _getHeaders(),
       );
       _checkSubscription(response.statusCode);
@@ -439,11 +439,10 @@ class ApiService {
     }
   }
 
-  Future<List<dynamic>> getSalesByDay({int days = 7, int? shopId}) async {
+  Future<List<dynamic>> getSalesByDay({int days = 7}) async {
     try {
-      final shopParam = shopId != null ? '&shop_id=$shopId' : '';
       final response = await http.get(
-        Uri.parse('$baseUrl/api/analytics/sales-by-day?days=$days$shopParam'),
+        Uri.parse('$baseUrl/api/analytics/sales-by-day?days=$days'),
         headers: await _getHeaders(),
       );
       _checkSubscription(response.statusCode);
@@ -468,11 +467,10 @@ class ApiService {
     }
   }
 
-  Future<List<dynamic>> getSellerStats({int? shopId}) async {
+  Future<List<dynamic>> getSellerStats() async {
     try {
-      final shopParam = shopId != null ? '?shop_id=$shopId' : '';
       final response = await http.get(
-        Uri.parse('$baseUrl/api/analytics/sellers$shopParam'),
+        Uri.parse('$baseUrl/api/analytics/sellers'),
         headers: await _getHeaders(),
       );
       _checkSubscription(response.statusCode);
@@ -480,38 +478,6 @@ class ApiService {
       return [];
     } catch (e) {
       return [];
-    }
-  }
-
-  /// Сводка по каждому магазину компании за период (для экрана
-  /// "Все магазины"): выручка, прибыль, число чеков, средний чек.
-  Future<List<dynamic>> getShopsSummary(String period) async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/analytics/by-shop?period=$period'),
-        headers: await _getHeaders(),
-      );
-      _checkSubscription(response.statusCode);
-      if (response.statusCode == 200) return jsonDecode(response.body);
-      return [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  /// Назначить (shopId != null) или снять (shopId == null) магазин
-  /// сотруднику.
-  Future<bool> assignUserShop(int userId, int? shopId) async {
-    try {
-      final response = await http.put(
-        Uri.parse('$baseUrl/api/users/$userId/shop'),
-        headers: await _getHeaders(),
-        body: jsonEncode({'shop_id': shopId}),
-      );
-      _checkSubscription(response.statusCode);
-      return response.statusCode == 200;
-    } catch (e) {
-      return false;
     }
   }
 
@@ -535,13 +501,12 @@ class ApiService {
     return createUserWithPin(username, password, role);
   }
 
-  /// Создание сотрудника с опциональным PIN и опциональной привязкой к магазину
+  /// Создание сотрудника с опциональным PIN
   Future<bool> createUserWithPin(
     String username,
     String password,
     String role, {
     String? pin,
-    int? shopId,
   }) async {
     try {
       final body = {
@@ -549,7 +514,6 @@ class ApiService {
         'password': password,
         'role': role,
         if (pin != null && pin.isNotEmpty) 'pin': pin,
-        if (shopId != null) 'shop_id': shopId,
       };
       final response = await http.post(
         Uri.parse('$baseUrl/api/users'),
@@ -790,14 +754,10 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>?> getAnalyticsSummary(
-    String period, {
-    int? shopId,
-  }) async {
+  Future<Map<String, dynamic>?> getAnalyticsSummary(String period) async {
     try {
-      final shopParam = shopId != null ? '&shop_id=$shopId' : '';
       final response = await http.get(
-        Uri.parse('$baseUrl/api/analytics/summary?period=$period$shopParam'),
+        Uri.parse('$baseUrl/api/analytics/summary?period=$period'),
         headers: await _getHeaders(),
       );
       _checkSubscription(response.statusCode);
@@ -824,6 +784,26 @@ class ApiService {
     }
   }
 
+  /// Сохраняет токен и данные выбранного магазина после создания/переключения —
+  /// все последующие запросы (товары, продажи, склад, должники, аналитика)
+  /// автоматически пойдут в рамках этого магазина, так как shop_id зашит в JWT.
+  Future<void> _applyShopSwitch(Map<String, dynamic> data) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (data['token'] != null) {
+      await prefs.setString('jwt_token', data['token']);
+    }
+    if (data['shop_id'] != null) {
+      await prefs.setInt('shop_id', data['shop_id']);
+    }
+    final shopName = data['shop']?['name'] ?? data['name'];
+    if (shopName != null) {
+      await prefs.setString('shop_name', shopName);
+    }
+    await prefs.setBool('needs_shop_setup', false);
+  }
+
+  /// Создать новый магазин. Он сразу становится активным (владелец получает
+  /// новый токен в рамках этого магазина и переключается на него).
   Future<Map<String, dynamic>?> createShop(String name) async {
     try {
       final response = await http.post(
@@ -832,10 +812,33 @@ class ApiService {
         body: jsonEncode({'name': name}),
       );
       _checkSubscription(response.statusCode);
-      if (response.statusCode == 201) return jsonDecode(response.body);
+      if (response.statusCode == 201) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        await _applyShopSwitch(data);
+        return data;
+      }
       return null;
     } catch (e) {
       return null;
+    }
+  }
+
+  /// Переключиться на другой уже существующий магазин.
+  Future<bool> switchShop(int id) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/shops/$id/switch'),
+        headers: await _getHeaders(),
+      );
+      _checkSubscription(response.statusCode);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        await _applyShopSwitch(data);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
     }
   }
 

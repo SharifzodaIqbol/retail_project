@@ -833,13 +833,25 @@ class _PaymentDialogState extends State<_PaymentDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final isKeyboardOpen = mediaQuery.viewInsets.bottom > 0;
+
     return AlertDialog(
+      // Поднимаем диалог вверх при открытой клавиатуре
+      alignment: isKeyboardOpen ? Alignment.topCenter : Alignment.center,
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: 16,
+        // Если клавиатура открыта, уменьшаем внешний отступ диалога до 10 пикселей сверху
+        vertical: isKeyboardOpen ? 10 : 24,
+      ),
       title: const Text('Тасдиқи пардохт'),
-      content: SingleChildScrollView(
+      content: SizedBox(
+        width: mediaQuery.size.width * 0.9,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Итоговая сумма
             const Text(
               'Дар маҷмӯъ',
               style: TextStyle(color: Colors.grey, fontSize: 13),
@@ -848,17 +860,20 @@ class _PaymentDialogState extends State<_PaymentDialog> {
             Text(
               '${widget.totalAmount.toStringAsFixed(2)} сомонӣ',
               style: const TextStyle(
-                fontSize: 24,
+                fontSize: 22, // Слегка уменьшили с 24, чтобы сэкономить место
                 fontWeight: FontWeight.w800,
                 color: Color(0xFF1A1A2E),
               ),
             ),
-            const SizedBox(height: 18),
+
+            // Динамический отступ: экономим место при открытой клавиатуре
+            SizedBox(height: isKeyboardOpen ? 6 : 16),
+
             const Text(
               'Аз харидор гирифта шуд (нақд)',
               style: TextStyle(color: Colors.grey, fontSize: 13),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             TextField(
               controller: _receivedCtrl,
               autofocus: true,
@@ -870,6 +885,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
               decoration: InputDecoration(
                 hintText: '0.00',
                 errorText: _isInsufficient ? 'Маблағ аз чек камтар аст' : null,
+                errorMaxLines: 1,
                 suffixIcon: _receivedCtrl.text.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.clear, size: 18),
@@ -879,34 +895,56 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
                 ),
+                // Делаем поле ввода более компактным по высоте
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
               ),
             ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _quickBills
-                  .map(
-                    (bill) => OutlinedButton(
-                      onPressed: () => _addToReceived(bill),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+
+            SizedBox(height: isKeyboardOpen ? 6 : 12),
+
+            // Быстрые купюры в одну строчку (горизонтальный скролл)
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: _quickBills
+                    .map(
+                      (bill) => Padding(
+                        padding: const EdgeInsets.only(right: 6.0),
+                        child: OutlinedButton(
+                          onPressed: () => _addToReceived(bill),
+                          style: OutlinedButton.styleFrom(
+                            // Сжали кнопки по высоте (vertical: 4), освобождая около 15 пикселей
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: Text('+$bill'),
                         ),
                       ),
-                      child: Text('+$bill'),
-                    ),
-                  )
-                  .toList(),
+                    )
+                    .toList(),
+              ),
             ),
-            const SizedBox(height: 18),
+
+            // Динамический отступ перед блоком сдачи
+            SizedBox(height: isKeyboardOpen ? 10 : 18),
+
+            // Блок сдачи — полностью на виду
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 10,
+              ), // Сделали чуть тоньше
               decoration: BoxDecoration(
                 color: _change != null
                     ? Colors.green.shade50
@@ -930,7 +968,8 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                         ? '${_change!.toStringAsFixed(2)} сомонӣ'
                         : '— сомонӣ',
                     style: TextStyle(
-                      fontSize: 20,
+                      fontSize:
+                          18, // 18 пикселей вместо 20 гарантирует вместимость
                       fontWeight: FontWeight.w800,
                       color: _change != null
                           ? Colors.green.shade700
