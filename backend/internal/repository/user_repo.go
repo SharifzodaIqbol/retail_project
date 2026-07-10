@@ -22,8 +22,8 @@ func NewUserRepository(db *pgxpool.Pool) *UserRepository {
 // Возвращает ТОЛЬКО owner'ов — продавцы через логин/пароль не входят.
 func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
 	var u domain.User
-	query := `SELECT id, company_id, username, password_hash, role FROM users WHERE username = $1 AND role = 'owner'`
-	err := r.db.QueryRow(ctx, query, username).Scan(&u.ID, &u.CompanyID, &u.Username, &u.PasswordHash, &u.Role)
+	query := `SELECT id, company_id, username, password_hash, role, COALESCE(current_shop_id, 0) FROM users WHERE username = $1 AND role = 'owner'`
+	err := r.db.QueryRow(ctx, query, username).Scan(&u.ID, &u.CompanyID, &u.Username, &u.PasswordHash, &u.Role, &u.CurrentShopID)
 	return &u, err
 }
 
@@ -56,18 +56,9 @@ func (r *UserRepository) GetAll(ctx context.Context) ([]domain.User, error) {
 	return users, nil
 }
 
-// GetAllByCompany — возвращает только сотрудников указанной компании.
-// Дополнительно возвращает shop_id/shop_name (через LEFT JOIN), чтобы UI
-// мог показать, за каким магазином закреплён сотрудник.
+// GetAllByCompany — возвращает только сотрудников указанной компании
 func (r *UserRepository) GetAllByCompany(ctx context.Context, companyID int) ([]domain.User, error) {
-	query := `
-		SELECT u.id, u.username, u.role, COALESCE(u.tg_chat_id, 0),
-		       (u.pin_hash IS NOT NULL AND u.pin_hash != ''),
-		       u.shop_id, COALESCE(s.name, '')
-		FROM users u
-		LEFT JOIN shops s ON s.id = u.shop_id
-		WHERE u.company_id = $1
-		ORDER BY u.role, u.username`
+	query := `SELECT id, username, role, COALESCE(tg_chat_id, 0), (pin_hash IS NOT NULL AND pin_hash != '') FROM users WHERE company_id = $1 ORDER BY role, username`
 	rows, err := r.db.Query(ctx, query, companyID)
 	if err != nil {
 		return nil, err
@@ -77,7 +68,7 @@ func (r *UserRepository) GetAllByCompany(ctx context.Context, companyID int) ([]
 	var users []domain.User
 	for rows.Next() {
 		var u domain.User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.TgChatID, &u.HasPin, &u.ShopID, &u.ShopName); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.TgChatID, &u.HasPin); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -96,41 +87,35 @@ func (r *UserRepository) GetByID(ctx context.Context, id int) (*domain.User, err
 // GetByIDAndCompany — получить пользователя по ID с проверкой company_id (безопасность)
 func (r *UserRepository) GetByIDAndCompany(ctx context.Context, id int, companyID int) (*domain.User, error) {
 	var u domain.User
-	query := `SELECT id, company_id, username, COALESCE(pin_hash,''), role FROM users WHERE id = $1 AND company_id = $2`
-	err := r.db.QueryRow(ctx, query, id, companyID).Scan(&u.ID, &u.CompanyID, &u.Username, &u.PinHash, &u.Role)
+	query := `SELECT id, company_id, username, COALESCE(pin_hash,''), role, COALESCE(shop_id, 0) FROM users WHERE id = $1 AND company_id = $2`
+	err := r.db.QueryRow(ctx, query, id, companyID).Scan(&u.ID, &u.CompanyID, &u.Username, &u.PinHash, &u.Role, &u.ShopID)
 	return &u, err
 }
 
+// SetCurrentShop — запоминает, какой магазин сейчас выбран у владельца
+// (чтобы при следующем входе открывался тот же магазин, а не первый попавшийся).
+func (r *UserRepository) SetCurrentShop(ctx context.Context, userID int, shopID int) error {
+	_, err := r.db.Exec(ctx, `UPDATE users SET current_shop_id = $1 WHERE id = $2`, shopID, userID)
+	return err
+}
+
 func (r *UserRepository) Create(ctx context.Context, u domain.User) error {
-	query := `INSERT INTO users (username, password_hash, role, company_id, shop_id) VALUES ($1, $2, $3, $4, $5)`
+	query := `INSERT INTO users (username, password_hash, role, company_id, shop_id) VALUES ($1, $2, $3, $4, NULLIF($5, 0))`
 	_, err := r.db.Exec(ctx, query, u.Username, u.PasswordHash, u.Role, u.CompanyID, u.ShopID)
 	return err
 }
 
 // CreateWithPin — создание пользователя сразу с PIN (без пароля для seller'а)
 func (r *UserRepository) CreateWithPin(ctx context.Context, u domain.User) error {
-	query := `INSERT INTO users (username, password_hash, pin_hash, role, company_id, shop_id) VALUES ($1, $2, $3, $4, $5, $6)`
+	query := `INSERT INTO users (username, password_hash, pin_hash, role, company_id, shop_id) VALUES ($1, $2, $3, $4, $5, NULLIF($6, 0))`
 	_, err := r.db.Exec(ctx, query, u.Username, u.PasswordHash, u.PinHash, u.Role, u.CompanyID, u.ShopID)
 	return err
 }
 
-// CreateSeller — создание продавца без пароля (только PIN).
-// shop_id — магазин, за которым закрепляется продавец (может быть nil,
-// тогда его чеки будут учитываться как "без магазина" в аналитике).
+// CreateSeller — создание продавца без пароля (только PIN)
 func (r *UserRepository) CreateSeller(ctx context.Context, u domain.User) error {
-	query := `INSERT INTO users (username, password_hash, pin_hash, role, company_id, shop_id) VALUES ($1, '', $2, $3, $4, $5)`
+	query := `INSERT INTO users (username, password_hash, pin_hash, role, company_id, shop_id) VALUES ($1, '', $2, $3, $4, NULLIF($5, 0))`
 	_, err := r.db.Exec(ctx, query, u.Username, u.PinHash, u.Role, u.CompanyID, u.ShopID)
-	return err
-}
-
-// SetUserShop — назначает (или снимает, если shopID == nil) магазин
-// сотруднику. Проверка принадлежности магазина компании выполняется
-// на уровне хендлера (h.shopRepo.BelongsToCompany) перед вызовом.
-func (r *UserRepository) SetUserShop(ctx context.Context, userID int, companyID int, shopID *int) error {
-	_, err := r.db.Exec(ctx,
-		`UPDATE users SET shop_id = $1 WHERE id = $2 AND company_id = $3`,
-		shopID, userID, companyID,
-	)
 	return err
 }
 

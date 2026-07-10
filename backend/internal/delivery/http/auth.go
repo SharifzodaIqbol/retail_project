@@ -53,6 +53,7 @@ func (h *Handler) register(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{"status": "success"})
 }
+
 // login — вход владельца по username+password.
 // ИСПРАВЛЕНО: добавлен rate limiting (см. internal/ratelimit) — без него
 // пароль можно было подбирать без ограничений.
@@ -94,7 +95,36 @@ func (h *Handler) login(c *gin.Context) {
 	}
 	h.loginLimiter.Reset(userKey)
 
-	token, errToken := auth.GenerateToken(user.ID, user.CompanyID, user.Role, os.Getenv("JWT_SECRET"))
+	// Определяем, в контексте какого магазина будет работать токен владельца:
+	// используем последний выбранный (current_shop_id), если он всё ещё
+	// существует, иначе — первый магазин компании. Если магазинов ещё нет —
+	// shopID = 0, и фронтенд обязан предложить создать первый магазин.
+	shops, err := h.shopRepo.GetAllByCompany(context.Background(), user.CompanyID)
+	if err != nil {
+		logErr(c, err, "Ошибка получения списка магазинов при логине", "company_id", user.CompanyID)
+		c.JSON(500, gin.H{"error": "Ошибка сервера"})
+		return
+	}
+
+	shopID := 0
+	shopName := ""
+	needsShopSetup := len(shops) == 0
+	if !needsShopSetup {
+		shopID = shops[0].ID
+		shopName = shops[0].Name
+		for _, s := range shops {
+			if s.ID == user.CurrentShopID {
+				shopID = s.ID
+				shopName = s.Name
+				break
+			}
+		}
+		if shopID != user.CurrentShopID {
+			_ = h.userRepo.SetCurrentShop(context.Background(), user.ID, shopID)
+		}
+	}
+
+	token, errToken := auth.GenerateToken(user.ID, user.CompanyID, shopID, user.Role, os.Getenv("JWT_SECRET"))
 	if errToken != nil {
 		logErr(c, errToken, "Ошибка генерации JWT токена при логине", "user_id", user.ID, "company_id", user.CompanyID)
 		c.JSON(500, gin.H{"error": "Ошибка сервера при создании сессии"})
@@ -108,10 +138,13 @@ func (h *Handler) login(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{
-		"token":        token,
-		"role":         user.Role,
-		"username":     user.Username,
-		"company_id":   user.CompanyID,
-		"company_name": companyName,
+		"token":            token,
+		"role":             user.Role,
+		"username":         user.Username,
+		"company_id":       user.CompanyID,
+		"company_name":     companyName,
+		"shop_id":          shopID,
+		"shop_name":        shopName,
+		"needs_shop_setup": needsShopSetup,
 	})
 }

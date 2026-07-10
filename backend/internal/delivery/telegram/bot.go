@@ -128,7 +128,7 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 		if err != nil || user.Role != "owner" {
 			return c.Send("⛔ Танҳо соҳиби мағоза метавонад боқимондаро бубинад.")
 		}
-		products, err := productRepo.GetLowStockProducts(context.Background(), user.CompanyID, 10)
+		products, err := productRepo.GetLowStockProductsByCompany(context.Background(), user.CompanyID, 10)
 		if err != nil {
 			logger.L.Error("Telegram: ошибка получения товаров с низким остатком", "company_id", user.CompanyID, "error", err.Error())
 			return c.Send("❌ Хатогии базаи маълумот.")

@@ -17,26 +17,21 @@ func NewSaleRepository(db *pgxpool.Pool) *SaleRepository {
 	return &SaleRepository{db: db}
 }
 
-// ExecuteSale — создаёт продажу строго в рамках одной компании.
-// ВАЖНО: company_id записывается в sales, и каждая позиция чека проверяется
-// на принадлежность той же компании (раньше можно было продать товар чужой
-// компании и списать его склад, передав чужой product_id).
-func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID int, sellerID int, items []domain.SaleItem, total float64) (int, []domain.Product, error) {
+// ExecuteSale — создаёт продажу строго в рамках одного магазина.
+// ВАЖНО: company_id и shop_id записываются в sales, и каждая позиция чека
+// проверяется на принадлежность тому же магазину (нельзя продать и списать
+// со склада товар другого магазина/компании, передав чужой product_id).
+func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID, shopID int, sellerID int, items []domain.SaleItem, total float64) (int, []domain.Product, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return 0, nil, err
 	}
 	defer tx.Rollback(ctx)
 
-	// shop_id берём из карточки продавца: каждый продавец закреплён (или
-	// нет) за конкретным магазином, и его чеки автоматически относятся
-	// к этому магазину — это и даёт владельцу возможность фильтровать
-	// аналитику по магазинам.
 	var saleID int
 	err = tx.QueryRow(ctx,
-		`INSERT INTO sales (company_id, seller_id, shop_id, total_amount)
-		 VALUES ($1, $2, (SELECT shop_id FROM users WHERE id = $2), $3) RETURNING id`,
-		companyID, sellerID, total).Scan(&saleID)
+		"INSERT INTO sales (company_id, shop_id, seller_id, total_amount) VALUES ($1, $2, $3, $4) RETURNING id",
+		companyID, shopID, sellerID, total).Scan(&saleID)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -45,20 +40,20 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID int, sellerI
 
 	for _, item := range items {
 		_, err = tx.Exec(ctx, `INSERT INTO sale_items 
-							   (sale_id, company_id, product_id, quantity, price_at_sale) 
-							   VALUES ($1, $2, $3, $4, $5)`,
+						   (sale_id, company_id, product_id, quantity, price_at_sale) 
+						   VALUES ($1, $2, $3, $4, $5)`,
 			saleID, companyID, item.ProductID, item.Quantity, item.PriceAtSale)
 		if err != nil {
 			return 0, nil, err
 		}
 
 		var p domain.Product
-		// company_id = $3 — не даём списать склад товара, принадлежащего другой компании
+		// company_id/shop_id — не даём списать склад товара, принадлежащего другому магазину
 		err = tx.QueryRow(ctx, `UPDATE products 
 								SET stock = stock - $1 
-								WHERE id = $2 AND company_id = $3 AND stock >= $1 
+								WHERE id = $2 AND company_id = $3 AND shop_id = $4 AND stock >= $1 
 								RETURNING name, stock`,
-			item.Quantity, item.ProductID, companyID).Scan(&p.Name, &p.Stock)
+			item.Quantity, item.ProductID, companyID, shopID).Scan(&p.Name, &p.Stock)
 
 		if err != nil {
 			return 0, nil, fmt.Errorf("недостаточно товара ID: %d", item.ProductID)
@@ -123,15 +118,15 @@ func (r *SaleRepository) GetTopProducts(ctx context.Context, companyID int, limi
 	return report, nil
 }
 
-// GetAll — возвращает страницу истории продаж с пагинацией.
+// GetAll — возвращает страницу истории продаж текущего магазина с пагинацией.
 // limit  — количество записей на странице (рекомендуется 50).
 // offset — смещение (= (page-1) * limit).
-func (r *SaleRepository) GetAll(ctx context.Context, companyID int, limit, offset int) ([]domain.Sale, int, error) {
+func (r *SaleRepository) GetAll(ctx context.Context, companyID, shopID int, limit, offset int) ([]domain.Sale, int, error) {
 	// Общее количество для вычисления total_pages
 	var total int
 	err := r.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM sales WHERE company_id = $1`,
-		companyID,
+		`SELECT COUNT(*) FROM sales WHERE company_id = $1 AND shop_id = $2`,
+		companyID, shopID,
 	).Scan(&total)
 	if err != nil {
 		return nil, 0, err
@@ -142,11 +137,11 @@ func (r *SaleRepository) GetAll(ctx context.Context, companyID int, limit, offse
                TO_CHAR(s.created_at, 'DD.MM.YYYY HH24:MI') as created_at
         FROM sales s
         LEFT JOIN users u ON s.seller_id = u.id
-        WHERE s.company_id = $1
+        WHERE s.company_id = $1 AND s.shop_id = $2
         ORDER BY s.id DESC
-        LIMIT $2 OFFSET $3`
+        LIMIT $3 OFFSET $4`
 
-	rows, err := r.db.Query(ctx, query, companyID, limit, offset)
+	rows, err := r.db.Query(ctx, query, companyID, shopID, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -172,10 +167,10 @@ func (r *SaleRepository) GetAll(ctx context.Context, companyID int, limit, offse
 	return sales, total, rows.Err()
 }
 
-// CancelSale — отменяет чек строго внутри своей компании.
-// companyID добавлен в WHERE, чтобы владелец одной компании не мог
+// CancelSale — отменяет чек строго внутри своего магазина.
+// companyID/shopID добавлены в WHERE, чтобы владелец одного магазина не мог
 // отменить (и тем самым вернуть на склад товар) чужой чек по его ID.
-func (r *SaleRepository) CancelSale(ctx context.Context, companyID int, saleID int, reason string) error {
+func (r *SaleRepository) CancelSale(ctx context.Context, companyID, shopID int, saleID int, reason string) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -183,7 +178,7 @@ func (r *SaleRepository) CancelSale(ctx context.Context, companyID int, saleID i
 	defer tx.Rollback(ctx)
 
 	var exists bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sales WHERE id = $1 AND company_id = $2)`, saleID, companyID).Scan(&exists)
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sales WHERE id = $1 AND company_id = $2 AND shop_id = $3)`, saleID, companyID, shopID).Scan(&exists)
 	if err != nil {
 		return err
 	}
@@ -202,7 +197,7 @@ func (r *SaleRepository) CancelSale(ctx context.Context, companyID int, saleID i
 		return err
 	}
 
-	_, err = tx.Exec(ctx, "UPDATE sales SET is_canceled = true, cancel_reason = $1 WHERE id = $2 AND company_id = $3", reason, saleID, companyID)
+	_, err = tx.Exec(ctx, "UPDATE sales SET is_canceled = true, cancel_reason = $1 WHERE id = $2 AND company_id = $3 AND shop_id = $4", reason, saleID, companyID, shopID)
 	if err != nil {
 		return err
 	}
@@ -210,10 +205,10 @@ func (r *SaleRepository) CancelSale(ctx context.Context, companyID int, saleID i
 	return tx.Commit(ctx)
 }
 
-// GetSaleTotal — возвращает сумму чека, только если он принадлежит компании
-func (r *SaleRepository) GetSaleTotal(ctx context.Context, companyID int, saleID int) (float64, error) {
+// GetSaleTotal — возвращает сумму чека, только если он принадлежит магазину
+func (r *SaleRepository) GetSaleTotal(ctx context.Context, companyID, shopID int, saleID int) (float64, error) {
 	var total float64
-	err := r.db.QueryRow(ctx, "SELECT total_amount FROM sales WHERE id = $1 AND company_id = $2", saleID, companyID).Scan(&total)
+	err := r.db.QueryRow(ctx, "SELECT total_amount FROM sales WHERE id = $1 AND company_id = $2 AND shop_id = $3", saleID, companyID, shopID).Scan(&total)
 	return total, err
 }
 
@@ -235,10 +230,7 @@ func (r *SaleRepository) GetDailyNetProfit(ctx context.Context, companyID int) (
 
 // ─── НОВЫЕ методы аналитики ────────────────────────────────────────────────
 
-// GetPeriodSummary — сводка за период. Если shopID != nil, данные
-// фильтруются по конкретному магазину (для переключателя магазинов в UI);
-// если nil — сводка по всей компании (все магазины вместе), как раньше.
-func (r *SaleRepository) GetPeriodSummary(ctx context.Context, companyID int, period string, shopID *int) (domain.PeriodSummary, error) {
+func (r *SaleRepository) GetPeriodSummary(ctx context.Context, companyID, shopID int, period string) (domain.PeriodSummary, error) {
 	var dateFilter string
 	switch period {
 	case "week":
@@ -247,13 +239,6 @@ func (r *SaleRepository) GetPeriodSummary(ctx context.Context, companyID int, pe
 		dateFilter = "created_at >= DATE_TRUNC('month', CURRENT_DATE)"
 	default: // today
 		dateFilter = "created_at >= CURRENT_DATE"
-	}
-
-	shopFilter := ""
-	args := []interface{}{companyID}
-	if shopID != nil {
-		shopFilter = " AND s.shop_id = $2"
-		args = append(args, *shopID)
 	}
 
 	var summary domain.PeriodSummary
@@ -266,28 +251,16 @@ func (r *SaleRepository) GetPeriodSummary(ctx context.Context, companyID int, pe
 		FROM sales s
 		LEFT JOIN sale_items si ON s.id = si.sale_id
 		LEFT JOIN products p ON si.product_id = p.id
-		WHERE s.is_canceled = false AND s.company_id = $1 AND s.%s%s`, dateFilter, shopFilter)
+		WHERE s.is_canceled = false AND s.company_id = $1 AND s.shop_id = $2 AND s.%s`, dateFilter)
 
-	err := r.db.QueryRow(ctx, query, args...).Scan(
+	err := r.db.QueryRow(ctx, query, companyID, shopID).Scan(
 		&summary.Revenue, &summary.Profit, &summary.SalesCount, &summary.AvgCheck,
 	)
 	return summary, err
 }
 
-// GetTopProductsDetailed — топ товаров по количеству продаж. shopID (если
-// задан) фильтрует по конкретному магазину.
-func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, companyID int, limit int, shopID *int) ([]domain.TopProduct, error) {
-	shopFilter := ""
-	args := []interface{}{companyID}
-	limitArg := "$2"
-	if shopID != nil {
-		shopFilter = " AND s.shop_id = $2"
-		args = append(args, *shopID)
-		limitArg = "$3"
-	}
-	args = append(args, limit)
-
-	query := fmt.Sprintf(`
+func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, companyID, shopID int, limit int) ([]domain.TopProduct, error) {
+	query := `
         SELECT 
             p.id,
             p.name, 
@@ -297,12 +270,12 @@ func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, companyID i
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
-        WHERE s.is_canceled = false AND s.company_id = $1%s
+        WHERE s.is_canceled = false AND s.company_id = $1 AND s.shop_id = $2
         GROUP BY p.id, p.name
         ORDER BY total_qty DESC
-        LIMIT %s`, shopFilter, limitArg)
+        LIMIT $3`
 
-	rows, err := r.db.Query(ctx, query, args...)
+	rows, err := r.db.Query(ctx, query, companyID, shopID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -319,17 +292,8 @@ func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, companyID i
 	return products, nil
 }
 
-// GetSalesByDay — продажи по дням. shopID (если задан) фильтрует по
-// конкретному магазину.
-func (r *SaleRepository) GetSalesByDay(ctx context.Context, companyID int, days int, shopID *int) ([]domain.SaleByDay, error) {
-	shopFilter := ""
-	args := []interface{}{days, companyID}
-	if shopID != nil {
-		shopFilter = " AND s.shop_id = $3"
-		args = append(args, *shopID)
-	}
-
-	query := fmt.Sprintf(`
+func (r *SaleRepository) GetSalesByDay(ctx context.Context, companyID, shopID int, days int) ([]domain.SaleByDay, error) {
+	query := `
     WITH daily_series AS (
         SELECT generate_series(
             CURRENT_DATE - ($1 - 1) * INTERVAL '1 day',
@@ -352,7 +316,7 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, companyID int, days 
             JOIN products p ON si.product_id = p.id
             GROUP BY si.sale_id
         ) i ON s.id = i.sale_id
-        WHERE s.is_canceled = false AND s.company_id = $2%s
+        WHERE s.is_canceled = false AND s.company_id = $2 AND s.shop_id = $3
         GROUP BY s.created_at::date
     )
     SELECT 
@@ -362,9 +326,9 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, companyID int, days 
         COALESCE(ds_val.sales_count, 0) as count
     FROM daily_series ds
     LEFT JOIN daily_sales ds_val ON ds.day = ds_val.sale_date
-    ORDER BY ds.day ASC`, shopFilter)
+    ORDER BY ds.day ASC`
 
-	rows, err := r.db.Query(ctx, query, args...)
+	rows, err := r.db.Query(ctx, query, days, companyID, shopID)
 	if err != nil {
 		return nil, err
 	}
@@ -381,17 +345,8 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, companyID int, days 
 	return result, nil
 }
 
-// GetSellerStats — статистика продавцов за сегодня. shopID (если задан)
-// фильтрует по конкретному магазину.
-func (r *SaleRepository) GetSellerStats(ctx context.Context, companyID int, shopID *int) ([]domain.SellerStat, error) {
-	shopFilter := ""
-	args := []interface{}{companyID}
-	if shopID != nil {
-		shopFilter = " AND s.shop_id = $2"
-		args = append(args, *shopID)
-	}
-
-	query := fmt.Sprintf(`
+func (r *SaleRepository) GetSellerStats(ctx context.Context, companyID, shopID int) ([]domain.SellerStat, error) {
+	query := `
         SELECT 
             s.seller_id,
             u.username,
@@ -401,11 +356,11 @@ func (r *SaleRepository) GetSellerStats(ctx context.Context, companyID int, shop
         JOIN users u ON s.seller_id = u.id
         WHERE s.is_canceled = false
           AND s.created_at >= CURRENT_DATE
-          AND s.company_id = $1%s
+          AND s.company_id = $1 AND s.shop_id = $2
         GROUP BY s.seller_id, u.username
-        ORDER BY total_revenue DESC`, shopFilter)
+        ORDER BY total_revenue DESC`
 
-	rows, err := r.db.Query(ctx, query, args...)
+	rows, err := r.db.Query(ctx, query, companyID, shopID)
 	if err != nil {
 		return nil, err
 	}
@@ -420,99 +375,4 @@ func (r *SaleRepository) GetSellerStats(ctx context.Context, companyID int, shop
 		stats = append(stats, s)
 	}
 	return stats, nil
-}
-
-// GetSummaryByShop — сводка по КАЖДОМУ магазину компании за период:
-// выручка, прибыль, число чеков и средний чек. Используется для экрана
-// "Все магазины", где владелец сравнивает магазины между собой одним
-// взглядом. Магазины без продаж за период тоже попадают в список (с
-// нулевыми значениями), плюс отдельной строкой — продажи, у которых
-// не оказалось привязанного магазина (например, чек продавца без
-// назначенного магазина).
-func (r *SaleRepository) GetSummaryByShop(ctx context.Context, companyID int, period string) ([]domain.ShopSummary, error) {
-	var dateFilter string
-	switch period {
-	case "week":
-		dateFilter = "s.created_at >= CURRENT_DATE - INTERVAL '7 days'"
-	case "month":
-		dateFilter = "s.created_at >= DATE_TRUNC('month', CURRENT_DATE)"
-	default: // today
-		dateFilter = "s.created_at >= CURRENT_DATE"
-	}
-
-	query := fmt.Sprintf(`
-        SELECT 
-            sh.id,
-            sh.name,
-            COALESCE(SUM(s.total_amount), 0) as revenue,
-            COALESCE(SUM(ip.profit_per_sale), 0) as profit,
-            COUNT(DISTINCT s.id) as sales_count,
-            COALESCE(AVG(s.total_amount), 0) as avg_check
-        FROM shops sh
-        LEFT JOIN sales s
-               ON s.shop_id = sh.id
-              AND s.is_canceled = false
-              AND %s
-        LEFT JOIN (
-            SELECT si.sale_id, SUM(si.quantity * (si.price_at_sale - p.buy_price)) as profit_per_sale
-            FROM sale_items si
-            JOIN products p ON si.product_id = p.id
-            GROUP BY si.sale_id
-        ) ip ON ip.sale_id = s.id
-        WHERE sh.company_id = $1
-        GROUP BY sh.id, sh.name
-        ORDER BY revenue DESC`, dateFilter)
-
-	rows, err := r.db.Query(ctx, query, companyID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var result []domain.ShopSummary
-	for rows.Next() {
-		var s domain.ShopSummary
-		var shopID int
-		if err := rows.Scan(&shopID, &s.ShopName, &s.Revenue, &s.Profit, &s.SalesCount, &s.AvgCheck); err != nil {
-			return nil, fmt.Errorf("scan shop summary row: %w", err)
-		}
-		s.ShopID = &shopID
-		result = append(result, s)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	// Отдельно считаем чеки без магазина (seller без привязки к shop_id),
-	// чтобы выручка не "терялась" молча из общей картины.
-	unassignedFilter := fmt.Sprintf("s.is_canceled = false AND s.shop_id IS NULL AND s.company_id = $1 AND %s", dateFilter)
-	unassignedQuery := fmt.Sprintf(`
-        SELECT 
-            COALESCE(SUM(s.total_amount), 0) as revenue,
-            COALESCE(SUM(ip.profit_per_sale), 0) as profit,
-            COUNT(DISTINCT s.id) as sales_count,
-            COALESCE(AVG(s.total_amount), 0) as avg_check
-        FROM sales s
-        LEFT JOIN (
-            SELECT si.sale_id, SUM(si.quantity * (si.price_at_sale - p.buy_price)) as profit_per_sale
-            FROM sale_items si
-            JOIN products p ON si.product_id = p.id
-            GROUP BY si.sale_id
-        ) ip ON ip.sale_id = s.id
-        WHERE %s`, unassignedFilter)
-
-	var unassigned domain.ShopSummary
-	err = r.db.QueryRow(ctx, unassignedQuery, companyID).Scan(
-		&unassigned.Revenue, &unassigned.Profit, &unassigned.SalesCount, &unassigned.AvgCheck,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("scan unassigned summary: %w", err)
-	}
-	if unassigned.SalesCount > 0 {
-		unassigned.ShopID = nil
-		unassigned.ShopName = "Бе мағоза"
-		result = append(result, unassigned)
-	}
-
-	return result, nil
 }

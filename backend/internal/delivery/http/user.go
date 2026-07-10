@@ -40,26 +40,15 @@ func (h *Handler) createUser(c *gin.Context) {
 		return
 	}
 
-	// Если указан shop_id — проверяем, что магазин принадлежит компании
-	// владельца (иначе можно было бы привязать сотрудника к чужому магазину).
-	if req.ShopID != nil {
-		belongs, err := h.shopRepo.BelongsToCompany(context.Background(), *req.ShopID, ownerCompanyID.(int))
-		if err != nil {
-			logErr(c, err, "Создание сотрудника: ошибка проверки магазина", "shop_id", *req.ShopID)
-			c.JSON(500, gin.H{"error": "Ошибка проверки магазина"})
-			return
-		}
-		if !belongs {
-			c.JSON(400, gin.H{"error": "Магазин не найден"})
-			return
-		}
-	}
+	// Новый сотрудник привязывается к магазину, который сейчас открыт у
+	// владельца — так продавец сразу видит склад/продажи именно этого магазина.
+	currentShopID, _ := c.Get("shop_id")
 
 	user := domain.User{
 		Username:  req.Username,
 		Role:      req.Role,
 		CompanyID: ownerCompanyID.(int),
-		ShopID:    req.ShopID,
+		ShopID:    currentShopID.(int),
 	}
 
 	// Для seller'а — пароль не нужен, только PIN
@@ -132,51 +121,6 @@ func (h *Handler) deleteUser(c *gin.Context) {
 	if err := h.userRepo.Delete(context.Background(), id, companyID); err != nil {
 		logErr(c, err, "Ошибка удаления сотрудника", "user_id", id, "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Ошибка удаления"})
-		return
-	}
-	c.JSON(200, gin.H{"status": "ok"})
-}
-
-// assignUserShop — хозяин назначает (или снимает, если shop_id == null)
-// магазин сотруднику. После этого его новые продажи будут учитываться
-// в аналитике именно этого магазина.
-func (h *Handler) assignUserShop(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		c.JSON(400, gin.H{"error": "Неверный ID"})
-		return
-	}
-
-	var req domain.AssignShopRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Неверный формат данных"})
-		return
-	}
-
-	companyID, _ := c.Get("company_id")
-
-	if req.ShopID != nil {
-		belongs, err := h.shopRepo.BelongsToCompany(context.Background(), *req.ShopID, companyID.(int))
-		if err != nil {
-			logErr(c, err, "Назначение магазина: ошибка проверки", "user_id", id, "shop_id", *req.ShopID)
-			c.JSON(500, gin.H{"error": "Ошибка проверки магазина"})
-			return
-		}
-		if !belongs {
-			c.JSON(400, gin.H{"error": "Магазин не найден"})
-			return
-		}
-	}
-
-	if _, err := h.userRepo.GetByIDAndCompany(context.Background(), id, companyID.(int)); err != nil {
-		logWarn(c, "Назначение магазина: пользователь не найден", "user_id", id, "company_id", companyID)
-		c.JSON(404, gin.H{"error": "Сотрудник не найден"})
-		return
-	}
-
-	if err := h.userRepo.SetUserShop(context.Background(), id, companyID.(int), req.ShopID); err != nil {
-		logErr(c, err, "Ошибка назначения магазина", "user_id", id, "company_id", companyID)
-		c.JSON(500, gin.H{"error": "Ошибка сохранения"})
 		return
 	}
 	c.JSON(200, gin.H{"status": "ok"})
@@ -273,7 +217,7 @@ func (h *Handler) pinLogin(c *gin.Context) {
 	}
 	h.pinLimiter.Reset(attemptKey)
 
-	token, errToken := auth.GenerateToken(user.ID, user.CompanyID, user.Role, os.Getenv("JWT_SECRET"))
+	token, errToken := auth.GenerateToken(user.ID, user.CompanyID, user.ShopID, user.Role, os.Getenv("JWT_SECRET"))
 	if errToken != nil {
 		logErr(c, errToken, "Ошибка генерации JWT токена при входе по PIN", "user_id", user.ID, "company_id", user.CompanyID)
 		c.JSON(500, gin.H{"error": "Ошибка сервера"})
@@ -284,6 +228,7 @@ func (h *Handler) pinLogin(c *gin.Context) {
 		"token":    token,
 		"role":     user.Role,
 		"username": user.Username,
+		"shop_id":  user.ShopID,
 	})
 }
 

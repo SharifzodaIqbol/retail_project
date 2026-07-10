@@ -15,15 +15,15 @@ func NewDebtorRepository(db *pgxpool.Pool) *DebtorRepository {
 	return &DebtorRepository{db: db}
 }
 
-// GetAll — возвращает страницу должников компании с пагинацией.
+// GetAll — возвращает страницу должников текущего магазина с пагинацией.
 // limit  — количество записей на странице (рекомендуется 50).
 // offset — смещение (= (page-1) * limit).
-func (r *DebtorRepository) GetAll(ctx context.Context, companyID int, limit, offset int) ([]domain.Debtor, int, error) {
+func (r *DebtorRepository) GetAll(ctx context.Context, companyID, shopID int, limit, offset int) ([]domain.Debtor, int, error) {
 	// Общее количество для вычисления total_pages
 	var total int
 	err := r.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM debtors WHERE company_id = $1`,
-		companyID,
+		`SELECT COUNT(*) FROM debtors WHERE company_id = $1 AND shop_id = $2`,
+		companyID, shopID,
 	).Scan(&total)
 	if err != nil {
 		return nil, 0, err
@@ -32,10 +32,10 @@ func (r *DebtorRepository) GetAll(ctx context.Context, companyID int, limit, off
 	rows, err := r.db.Query(ctx, `
 		SELECT id, company_id, full_name, COALESCE(phone,''), total_debt, updated_at
 		FROM debtors
-		WHERE company_id = $1
+		WHERE company_id = $1 AND shop_id = $2
 		ORDER BY updated_at DESC
-		LIMIT $2 OFFSET $3
-	`, companyID, limit, offset)
+		LIMIT $3 OFFSET $4
+	`, companyID, shopID, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -55,14 +55,14 @@ func (r *DebtorRepository) GetAll(ctx context.Context, companyID int, limit, off
 	return list, total, nil
 }
 
-// GetByID — получить должника по id (с проверкой company_id — изоляция данных)
-func (r *DebtorRepository) GetByID(ctx context.Context, id, companyID int) (*domain.Debtor, error) {
+// GetByID — получить должника по id (с проверкой company_id/shop_id — изоляция данных)
+func (r *DebtorRepository) GetByID(ctx context.Context, id, companyID, shopID int) (*domain.Debtor, error) {
 	var d domain.Debtor
 	err := r.db.QueryRow(ctx, `
 		SELECT id, company_id, full_name, COALESCE(phone,''), total_debt, updated_at
 		FROM debtors
-		WHERE id = $1 AND company_id = $2
-	`, id, companyID).Scan(&d.ID, &d.CompanyID, &d.FullName, &d.Phone, &d.TotalDebt, &d.UpdatedAt)
+		WHERE id = $1 AND company_id = $2 AND shop_id = $3
+	`, id, companyID, shopID).Scan(&d.ID, &d.CompanyID, &d.FullName, &d.Phone, &d.TotalDebt, &d.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +70,7 @@ func (r *DebtorRepository) GetByID(ctx context.Context, id, companyID int) (*dom
 }
 
 // Create — добавить нового должника
-func (r *DebtorRepository) Create(ctx context.Context, companyID int, req domain.CreateDebtorRequest) (*domain.Debtor, error) {
+func (r *DebtorRepository) Create(ctx context.Context, companyID, shopID int, req domain.CreateDebtorRequest) (*domain.Debtor, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -79,10 +79,10 @@ func (r *DebtorRepository) Create(ctx context.Context, companyID int, req domain
 
 	var d domain.Debtor
 	err = tx.QueryRow(ctx, `
-		INSERT INTO debtors (company_id, full_name, phone, total_debt, updated_at)
-		VALUES ($1, $2, $3, $4, NOW())
+		INSERT INTO debtors (company_id, shop_id, full_name, phone, total_debt, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
 		RETURNING id, company_id, full_name, COALESCE(phone,''), total_debt, updated_at
-	`, companyID, req.FullName, req.Phone, req.InitialDebt).
+	`, companyID, shopID, req.FullName, req.Phone, req.InitialDebt).
 		Scan(&d.ID, &d.CompanyID, &d.FullName, &d.Phone, &d.TotalDebt, &d.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -107,18 +107,18 @@ func (r *DebtorRepository) Create(ctx context.Context, companyID int, req domain
 
 // AddOperation — добавить операцию (частичная оплата "pay" или новый долг "take")
 // Возвращает обновлённого должника
-func (r *DebtorRepository) AddOperation(ctx context.Context, debtorID, companyID int, req domain.DebtOperationRequest) (*domain.Debtor, error) {
+func (r *DebtorRepository) AddOperation(ctx context.Context, debtorID, companyID, shopID int, req domain.DebtOperationRequest) (*domain.Debtor, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
 
-	// Проверяем принадлежность должника к компании (изоляция данных)
+	// Проверяем принадлежность должника к магазину (изоляция данных)
 	var currentDebt float64
 	err = tx.QueryRow(ctx,
-		`SELECT total_debt FROM debtors WHERE id = $1 AND company_id = $2 FOR UPDATE`,
-		debtorID, companyID,
+		`SELECT total_debt FROM debtors WHERE id = $1 AND company_id = $2 AND shop_id = $3 FOR UPDATE`,
+		debtorID, companyID, shopID,
 	).Scan(&currentDebt)
 	if err != nil {
 		return nil, ErrNotFound
@@ -140,9 +140,9 @@ func (r *DebtorRepository) AddOperation(ctx context.Context, debtorID, companyID
 	err = tx.QueryRow(ctx, `
 		UPDATE debtors
 		SET total_debt = $1, updated_at = NOW()
-		WHERE id = $2 AND company_id = $3
+		WHERE id = $2 AND company_id = $3 AND shop_id = $4
 		RETURNING id, company_id, full_name, COALESCE(phone,''), total_debt, updated_at
-	`, newDebt, debtorID, companyID).
+	`, newDebt, debtorID, companyID, shopID).
 		Scan(&d.ID, &d.CompanyID, &d.FullName, &d.Phone, &d.TotalDebt, &d.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -163,11 +163,11 @@ func (r *DebtorRepository) AddOperation(ctx context.Context, debtorID, companyID
 	return &d, nil
 }
 
-// Delete — удалить должника (с проверкой company_id)
-func (r *DebtorRepository) Delete(ctx context.Context, id, companyID int) error {
+// Delete — удалить должника (с проверкой company_id/shop_id)
+func (r *DebtorRepository) Delete(ctx context.Context, id, companyID, shopID int) error {
 	result, err := r.db.Exec(ctx,
-		`DELETE FROM debtors WHERE id = $1 AND company_id = $2`,
-		id, companyID,
+		`DELETE FROM debtors WHERE id = $1 AND company_id = $2 AND shop_id = $3`,
+		id, companyID, shopID,
 	)
 	if err != nil {
 		return err
@@ -178,13 +178,13 @@ func (r *DebtorRepository) Delete(ctx context.Context, id, companyID int) error 
 	return nil
 }
 
-// GetHistory — история операций по должнику (с проверкой company_id)
-func (r *DebtorRepository) GetHistory(ctx context.Context, debtorID, companyID int) ([]domain.DebtHistory, error) {
-	// Сначала убеждаемся, что должник принадлежит этой компании
+// GetHistory — история операций по должнику (с проверкой company_id/shop_id)
+func (r *DebtorRepository) GetHistory(ctx context.Context, debtorID, companyID, shopID int) ([]domain.DebtHistory, error) {
+	// Сначала убеждаемся, что должник принадлежит этому магазину
 	var exists bool
 	err := r.db.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM debtors WHERE id = $1 AND company_id = $2)`,
-		debtorID, companyID,
+		`SELECT EXISTS(SELECT 1 FROM debtors WHERE id = $1 AND company_id = $2 AND shop_id = $3)`,
+		debtorID, companyID, shopID,
 	).Scan(&exists)
 	if err != nil || !exists {
 		return nil, ErrNotFound
@@ -215,7 +215,9 @@ func (r *DebtorRepository) GetHistory(ctx context.Context, debtorID, companyID i
 	return list, nil
 }
 
-// GetAllForTelegram — краткий список должников для Telegram (только с долгом > 0)
+// GetAllForTelegram — краткий список должников для Telegram (только с долгом > 0).
+// Остаётся по всей компании — отчёт владельцу должен показывать должников
+// по всем его магазинам сразу, а не только по одному.
 func (r *DebtorRepository) GetAllForTelegram(ctx context.Context, companyID int) ([]domain.Debtor, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, company_id, full_name, COALESCE(phone,''), total_debt, updated_at

@@ -116,7 +116,6 @@ func (h *Handler) InitRoutes() *gin.Engine {
 			analytics.GET("/sales-by-day", h.getSalesByDay)
 			analytics.GET("/low-stock", h.getLowStock)
 			analytics.GET("/sellers", h.getSellerStats)
-			analytics.GET("/by-shop", h.getShopsSummary)
 		}
 
 		// Пользователи (только owner)
@@ -127,7 +126,6 @@ func (h *Handler) InitRoutes() *gin.Engine {
 			users.POST("", h.createUser)
 			users.DELETE("/:id", h.deleteUser)
 			users.PUT("/:id/pin", h.setUserPin)
-			users.PUT("/:id/shop", h.assignUserShop)
 		}
 
 		// Магазины (только owner) — задача #2
@@ -138,6 +136,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 			shops.POST("", h.createShop)
 			shops.PUT("/:id", h.updateShop)
 			shops.DELETE("/:id", h.deleteShop)
+			shops.POST("/:id/switch", h.switchShop)
 		}
 
 		// Telegram привязка (только owner)

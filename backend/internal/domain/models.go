@@ -18,22 +18,6 @@ type Shop struct {
 	Name      string `json:"name"`
 }
 
-// ShopSummary — сводка по одному магазину за период: используется для
-// экрана "Все магазины", где владелец сравнивает магазины между собой.
-type ShopSummary struct {
-	ShopID     *int    `json:"shop_id"`
-	ShopName   string  `json:"shop_name"`
-	Revenue    float64 `json:"revenue"`
-	Profit     float64 `json:"profit"`
-	SalesCount int     `json:"sales_count"`
-	AvgCheck   float64 `json:"avg_check"`
-}
-
-// AssignShopRequest — назначить (или снять) магазин сотруднику
-type AssignShopRequest struct {
-	ShopID *int `json:"shop_id"`
-}
-
 type RegisterCompanyRequest struct {
 	CompanyName string `json:"company_name" binding:"required"`
 	Username    string `json:"username" binding:"required"`
@@ -64,13 +48,12 @@ type Product struct {
 	CompanyID int     `json:"company_id"`
 	ShopID    int     `json:"shop_id,omitempty"`
 	Name      string  `json:"name"`
-	Barcode   string  `json:"barcode"`
+	Barcode   *string `json:"barcode"`
 	BuyPrice  float64 `json:"buy_price"`
 	SellPrice float64 `json:"sell_price"`
-	// Stock — float64, так как товары с unit = "kg" могут иметь дробный остаток (например, 2.5 кг).
-	Stock    float64 `json:"stock"`
-	Unit     string  `json:"unit"`
-	IsActive bool    `json:"is_active"`
+	Stock     float64 `json:"stock"`
+	Unit      string  `json:"unit"`
+	IsActive  bool    `json:"is_active"`
 }
 
 // ProductImportResult — отчёт об импорте товаров из Excel.
@@ -96,7 +79,7 @@ type Sale struct {
 	ID           int     `json:"id"`
 	SellerID     int     `json:"seller_id"`
 	SellerName   string  `json:"seller_name,omitempty"`
-	ShopID       *int    `json:"shop_id,omitempty"`
+	ShopID       int     `json:"shop_id,omitempty"`
 	TotalAmount  float64 `json:"total_amount"`
 	IsCanceled   bool    `json:"is_canceled"`
 	CancelReason *string `json:"cancel_reason"`
@@ -104,16 +87,16 @@ type Sale struct {
 }
 
 type User struct {
-	ID           int    `json:"id"`
-	CompanyID    int    `json:"company_id"`
-	Username     string `json:"username"`
-	PasswordHash string `json:"-"`
-	PinHash      string `json:"-"`
-	Role         string `json:"role"`
-	TgChatID     int64  `json:"tg_chat_id"`
-	HasPin       bool   `json:"has_pin"` // только для UI: есть ли PIN
-	ShopID       *int   `json:"shop_id,omitempty"`
-	ShopName     string `json:"shop_name,omitempty"`
+	ID            int    `json:"id"`
+	CompanyID     int    `json:"company_id"`
+	Username      string `json:"username"`
+	PasswordHash  string `json:"-"`
+	PinHash       string `json:"-"`
+	Role          string `json:"role"`
+	TgChatID      int64  `json:"tg_chat_id"`
+	HasPin        bool   `json:"has_pin"`                   // только для UI: есть ли PIN
+	ShopID        int    `json:"shop_id,omitempty"`         // магазин продавца (фиксированный)
+	CurrentShopID int    `json:"current_shop_id,omitempty"` // текущий выбранный магазин владельца
 }
 
 type LoginRequest struct {
@@ -139,7 +122,6 @@ type CreateUserRequest struct {
 	Password string `json:"password"`
 	Role     string `json:"role" binding:"required"`
 	Pin      string `json:"pin"`
-	ShopID   *int   `json:"shop_id"`
 }
 
 // CreateShopRequest — создать новый магазин внутри компании
@@ -193,6 +175,7 @@ type SellerStat struct {
 type Debtor struct {
 	ID        int       `json:"id"`
 	CompanyID int       `json:"company_id"`
+	ShopID    int       `json:"shop_id,omitempty"`
 	FullName  string    `json:"full_name"`
 	Phone     string    `json:"phone"`
 	TotalDebt float64   `json:"total_debt"`
