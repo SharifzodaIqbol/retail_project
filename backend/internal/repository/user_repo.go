@@ -58,7 +58,10 @@ func (r *UserRepository) GetAll(ctx context.Context) ([]domain.User, error) {
 
 // GetAllByCompany — возвращает только сотрудников указанной компании
 func (r *UserRepository) GetAllByCompany(ctx context.Context, companyID int) ([]domain.User, error) {
-	query := `SELECT id, username, role, COALESCE(tg_chat_id, 0), (pin_hash IS NOT NULL AND pin_hash != '') FROM users WHERE company_id = $1 ORDER BY role, username`
+	query := `SELECT u.id, u.username, u.role, COALESCE(u.tg_chat_id, 0), (u.pin_hash IS NOT NULL AND u.pin_hash != ''),
+	          COALESCE(u.shop_id, 0), COALESCE(s.name, '')
+	          FROM users u LEFT JOIN shops s ON s.id = u.shop_id
+	          WHERE u.company_id = $1 ORDER BY u.role, u.username`
 	rows, err := r.db.Query(ctx, query, companyID)
 	if err != nil {
 		return nil, err
@@ -68,7 +71,7 @@ func (r *UserRepository) GetAllByCompany(ctx context.Context, companyID int) ([]
 	var users []domain.User
 	for rows.Next() {
 		var u domain.User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.TgChatID, &u.HasPin); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.TgChatID, &u.HasPin, &u.ShopID, &u.ShopName); err != nil {
 			return nil, err
 		}
 		users = append(users, u)

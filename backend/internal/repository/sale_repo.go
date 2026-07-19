@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"retail-managment-system/internal/domain"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -230,19 +231,9 @@ func (r *SaleRepository) GetDailyNetProfit(ctx context.Context, companyID int) (
 
 // ─── НОВЫЕ методы аналитики ────────────────────────────────────────────────
 
-func (r *SaleRepository) GetPeriodSummary(ctx context.Context, companyID, shopID int, period string) (domain.PeriodSummary, error) {
-	var dateFilter string
-	switch period {
-	case "week":
-		dateFilter = "created_at >= CURRENT_DATE - INTERVAL '7 days'"
-	case "month":
-		dateFilter = "created_at >= DATE_TRUNC('month', CURRENT_DATE)"
-	default: // today
-		dateFilter = "created_at >= CURRENT_DATE"
-	}
-
+func (r *SaleRepository) GetPeriodSummary(ctx context.Context, companyID, shopID int, from, to time.Time) (domain.PeriodSummary, error) {
 	var summary domain.PeriodSummary
-	query := fmt.Sprintf(`
+	query := `
 		SELECT 
 			COALESCE(SUM(s.total_amount), 0) as revenue,
 			COALESCE(SUM(si.quantity * (si.price_at_sale - p.buy_price)), 0) as profit,
@@ -251,15 +242,16 @@ func (r *SaleRepository) GetPeriodSummary(ctx context.Context, companyID, shopID
 		FROM sales s
 		LEFT JOIN sale_items si ON s.id = si.sale_id
 		LEFT JOIN products p ON si.product_id = p.id
-		WHERE s.is_canceled = false AND s.company_id = $1 AND s.shop_id = $2 AND s.%s`, dateFilter)
+		WHERE s.is_canceled = false AND s.company_id = $1 AND s.shop_id = $2
+		  AND s.created_at >= $3 AND s.created_at < $4`
 
-	err := r.db.QueryRow(ctx, query, companyID, shopID).Scan(
+	err := r.db.QueryRow(ctx, query, companyID, shopID, from, to).Scan(
 		&summary.Revenue, &summary.Profit, &summary.SalesCount, &summary.AvgCheck,
 	)
 	return summary, err
 }
 
-func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, companyID, shopID int, limit int) ([]domain.TopProduct, error) {
+func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, companyID, shopID int, from, to time.Time, limit int) ([]domain.TopProduct, error) {
 	query := `
         SELECT 
             p.id,
@@ -271,11 +263,12 @@ func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, companyID, 
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
         WHERE s.is_canceled = false AND s.company_id = $1 AND s.shop_id = $2
+          AND s.created_at >= $3 AND s.created_at < $4
         GROUP BY p.id, p.name
         ORDER BY total_qty DESC
-        LIMIT $3`
+        LIMIT $5`
 
-	rows, err := r.db.Query(ctx, query, companyID, shopID, limit)
+	rows, err := r.db.Query(ctx, query, companyID, shopID, from, to, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +338,10 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, companyID, shopID in
 	return result, nil
 }
 
-func (r *SaleRepository) GetSellerStats(ctx context.Context, companyID, shopID int) ([]domain.SellerStat, error) {
+// GetSellerStats — продажи по каждому продавцу за произвольный период
+// (от/до), а не только за сегодня — чтобы владелец мог сравнить продавцов
+// за неделю, месяц или любой выбранный диапазон дат.
+func (r *SaleRepository) GetSellerStats(ctx context.Context, companyID, shopID int, from, to time.Time) ([]domain.SellerStat, error) {
 	query := `
         SELECT 
             s.seller_id,
@@ -355,12 +351,12 @@ func (r *SaleRepository) GetSellerStats(ctx context.Context, companyID, shopID i
         FROM sales s
         JOIN users u ON s.seller_id = u.id
         WHERE s.is_canceled = false
-          AND s.created_at >= CURRENT_DATE
+          AND s.created_at >= $3 AND s.created_at < $4
           AND s.company_id = $1 AND s.shop_id = $2
         GROUP BY s.seller_id, u.username
         ORDER BY total_revenue DESC`
 
-	rows, err := r.db.Query(ctx, query, companyID, shopID)
+	rows, err := r.db.Query(ctx, query, companyID, shopID, from, to)
 	if err != nil {
 		return nil, err
 	}

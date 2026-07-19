@@ -40,15 +40,28 @@ func (h *Handler) createUser(c *gin.Context) {
 		return
 	}
 
-	// Новый сотрудник привязывается к магазину, который сейчас открыт у
-	// владельца — так продавец сразу видит склад/продажи именно этого магазина.
+	// Магазин сотрудника: если владелец явно выбрал магазин в форме — используем
+	// его (после проверки, что он принадлежит его компании), иначе — тот
+	// магазин, что сейчас открыт у владельца.
 	currentShopID, _ := c.Get("shop_id")
+	targetShopID := currentShopID.(int)
+	if req.ShopID != 0 {
+		shops, errShops := h.shopRepo.GetAllByCompany(context.Background(), ownerCompanyID.(int))
+		if errShops == nil {
+			for _, s := range shops {
+				if s.ID == req.ShopID {
+					targetShopID = req.ShopID
+					break
+				}
+			}
+		}
+	}
 
 	user := domain.User{
 		Username:  req.Username,
 		Role:      req.Role,
 		CompanyID: ownerCompanyID.(int),
-		ShopID:    currentShopID.(int),
+		ShopID:    targetShopID,
 	}
 
 	// Для seller'а — пароль не нужен, только PIN
@@ -240,6 +253,10 @@ func (h *Handler) getTerminalUsers(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "company_id обязателен"})
 		return
 	}
+	// shop_id — необязателен для обратной совместимости, но если передан,
+	// терминал (конкретное устройство/касса) показывает только продавцов
+	// ЭТОГО магазина — иначе кассир одного филиала видит и продавцов другого.
+	shopID, _ := strconv.Atoi(c.Query("shop_id"))
 
 	list, err := h.userRepo.GetAllByCompany(context.Background(), companyID)
 	if err != nil {
@@ -256,8 +273,9 @@ func (h *Handler) getTerminalUsers(c *gin.Context) {
 	}
 	safe := make([]safeUser, 0, len(list))
 	for _, u := range list {
-		// В терминальном режиме показываем только seller'ов с PIN
-		if u.Role == "seller" && u.HasPin {
+		// В терминальном режиме показываем только seller'ов с PIN,
+		// и только из того магазина, к которому привязан этот терминал.
+		if u.Role == "seller" && u.HasPin && (shopID == 0 || u.ShopID == shopID) {
 			safe = append(safe, safeUser{
 				ID:       u.ID,
 				Username: u.Username,

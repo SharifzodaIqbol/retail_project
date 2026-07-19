@@ -96,6 +96,7 @@ type User struct {
 	TgChatID      int64  `json:"tg_chat_id"`
 	HasPin        bool   `json:"has_pin"`                   // только для UI: есть ли PIN
 	ShopID        int    `json:"shop_id,omitempty"`         // магазин продавца (фиксированный)
+	ShopName      string `json:"shop_name,omitempty"`       // название магазина (для списка сотрудников)
 	CurrentShopID int    `json:"current_shop_id,omitempty"` // текущий выбранный магазин владельца
 }
 
@@ -122,6 +123,7 @@ type CreateUserRequest struct {
 	Password string `json:"password"`
 	Role     string `json:"role" binding:"required"`
 	Pin      string `json:"pin"`
+	ShopID   int    `json:"shop_id"`
 }
 
 // CreateShopRequest — создать новый магазин внутри компании
