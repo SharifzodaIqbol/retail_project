@@ -43,7 +43,7 @@ class RetailApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Савидор',
+      title: 'Savidor',
       navigatorKey: ApiService.navigatorKey,
       theme: ThemeData(
         primaryColor: const Color(0xFF4F6EF7),
@@ -74,6 +74,7 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
   int _companyId = 0;
   String _companyName = '';
   bool _needsShopSetup = false;
+  int _shopId = 0;
 
   @override
   void initState() {
@@ -89,6 +90,7 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
     final companyId = prefs.getInt('company_id') ?? 0;
     final companyName = prefs.getString('company_name') ?? '';
     final needsShopSetup = prefs.getBool('needs_shop_setup') ?? false;
+    final shopId = prefs.getInt('shop_id') ?? 0;
 
     setState(() {
       _loggedIn = token.isNotEmpty;
@@ -97,6 +99,7 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
       _companyId = companyId;
       _companyName = companyName;
       _needsShopSetup = needsShopSetup;
+      _shopId = shopId;
       _checking = false;
     });
   }
@@ -106,12 +109,14 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
     final companyId = prefs.getInt('company_id') ?? 0;
     final companyName = prefs.getString('company_name') ?? '';
     final needsShopSetup = prefs.getBool('needs_shop_setup') ?? false;
+    final shopId = prefs.getInt('shop_id') ?? 0;
     setState(() {
       _loggedIn = true;
       _role = role;
       _companyId = companyId;
       _companyName = companyName;
       _needsShopSetup = needsShopSetup;
+      _shopId = shopId;
     });
     // Сразу после входа прогреваем офлайн-кэш целиком, не дожидаясь
     // первого фонового цикла — так офлайн-режим готов с первой минуты
@@ -147,6 +152,7 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
       return TerminalScreen(
         companyId: _companyId,
         companyName: _companyName,
+        shopId: _shopId,
         onSellerLogin: (token, role, username) async {
           final prefs = await SharedPreferences.getInstance();
           // Офлайн-токен не сохраняем в SharedPreferences — только имя и роль
@@ -173,6 +179,7 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
       return TerminalScreen(
         companyId: _companyId,
         companyName: _companyName,
+        shopId: _shopId,
         onSellerLogin: (token, role, username) async {
           final prefs = await SharedPreferences.getInstance();
           if (token != 'offline_token') {

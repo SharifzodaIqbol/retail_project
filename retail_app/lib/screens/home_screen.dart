@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -34,7 +33,17 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _syncOfflineSales();
+    // Синхронизацию неотправленных чеков теперь делает только
+    // SyncService (запускается один раз в main() на уровне всего
+    // приложения). Раньше здесь тоже вызывался _syncOfflineSales — но
+    // HomeScreen создаётся один раз и живёт внутри IndexedStack, поэтому
+    // при старте приложения оба места почти одновременно читали одну и
+    // ту же очередь pending-чеков и параллельно отправляли одни и те же
+    // чеки на сервер — гонка, которая могла привести к задвоенной
+    // продаже одного чека (два POST на /api/sales по одному и тому же
+    // sale_data). SyncService.start() и так вызывает syncNow() сразу при
+    // запуске, так что для этого экрана ничего специально дублировать
+    // не нужно.
     _loadUserInfo();
 
     // Запрашиваем фокус сразу после того, как кадр построится
@@ -176,33 +185,56 @@ class _HomeScreenState extends State<HomeScreen> {
       'total_amount': cart.totalAmount,
     };
 
-    bool success = await _apiService.createSale(saleData);
+    final result = await _apiService.createSale(saleData);
 
-    if (success) {
-      DataRefreshService.instance.notifySaleChanged();
-      DataRefreshService.instance.notifyProductChanged();
+    switch (result.status) {
+      case SaleSendStatus.success:
+        DataRefreshService.instance.notifySaleChanged();
+        DataRefreshService.instance.notifyProductChanged();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Фурӯш ба расмият дароварда шуд!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+        break;
+
+      case SaleSendStatus.networkError:
+        // Реального ответа от сервера не было — это настоящий обрыв связи,
+        // чек можно безопасно поставить в офлайн-очередь на автоповтор.
+        await DatabaseHelper.instance.insertOfflineSale(saleData);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Шабака нест! Чек дар хотираи телефон сабт шуд'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        break;
+
+      case SaleSendStatus.rejected:
+        // Сервер ответил и отклонил чек по существу (например, недостаточно
+        // товара на складе). Повторная идентичная отправка даст ту же
+        // ошибку, поэтому НЕ кладём чек в офлайн-очередь на автоповтор —
+        // вместо этого явно показываем причину, чтобы продавец/владелец
+        // мог её устранить (пополнить остатки, поправить количество и т.п.).
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Чек рад карда шуд: ${result.errorMessage ?? "номаълум"}',
+              ),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+        break;
     }
 
-    if (!success) {
-      await DatabaseHelper.instance.insertOfflineSale(saleData);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Шабака нест! Чек дар хотираи телефон сабт шуд'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ Фурӯш ба расмият дароварда шуд!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    }
     cart.clearCart();
   }
 
@@ -296,35 +328,6 @@ class _HomeScreenState extends State<HomeScreen> {
     ).then((_) {
       _requestScannerFocus();
     });
-  }
-
-  Future<void> _syncOfflineSales() async {
-    final unsynced = await DatabaseHelper.instance.getUnsyncedSales();
-    if (unsynced.isEmpty) return;
-
-    int successCount = 0;
-    for (var row in unsynced) {
-      final saleData = jsonDecode(row['sale_data']);
-      bool success = await _apiService.createSaleFromRawData(saleData);
-      if (success) {
-        await DatabaseHelper.instance.markSaleAsSynced(row['id']);
-        successCount++;
-      }
-    }
-
-    if (successCount > 0) {
-      DataRefreshService.instance.notifySaleChanged();
-      DataRefreshService.instance.notifyProductChanged();
-    }
-
-    if (successCount > 0 && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('☁️ Квитансияҳо ҳамоҳанг карда шудаанд: $successCount'),
-          backgroundColor: Colors.blue,
-        ),
-      );
-    }
   }
 
   void _logout() async {

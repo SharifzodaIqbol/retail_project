@@ -96,28 +96,45 @@ class SyncService {
   }
 
   Future<void> _syncOfflineSales() async {
+    // Важно: getUnsyncedSales отдаёт только 'pending' — чеки, уже
+    // помеченные 'failed' в прошлый раз (сервер отклонил их бизнес-
+    // ошибкой, например "недостаточно товара"), сюда не попадают и не
+    // будут молча повторяться на каждом тике этого сервиса.
     final unsynced = await _db.getUnsyncedSales();
     if (unsynced.isEmpty) return;
 
     int successCount = 0;
+    int rejectedCount = 0;
+
     for (final row in unsynced) {
       // Если связь пропала посреди пачки — прекращаем, остальное
       // досинхронизируется при следующем восстановлении связи.
       if (!ConnectivityService.instance.isOnline) break;
 
       final saleData = jsonDecode(row['sale_data']);
-      final success = await _api.createSaleFromRawData(saleData);
-      if (success) {
+      final result = await _api.createSaleFromRawData(saleData);
+
+      if (result.isSuccess) {
         await _db.markSaleAsSynced(row['id']);
         successCount++;
+      } else if (result.isRejected) {
+        // Сервер ответил и отклонил чек по существу (например, к моменту
+        // синхронизации на складе физически не хватило остатка — другой
+        // продавец успел продать последнее). Повторная идентичная отправка
+        // даст ту же ошибку, поэтому помечаем чек 'failed' и НЕ ретраим
+        // его молча на каждом тике — иначе именно он и будет вечно
+        // "стучаться" в сервер с одной и той же ошибкой в логах.
+        await _db.markSaleAsFailed(
+          row['id'],
+          result.errorMessage ?? 'Сервер чекро рад кард',
+        );
+        rejectedCount++;
       }
-      // Если конкретный чек не прошёл (например, к моменту синхронизации
-      // на складе физически не хватило остатка — другой продавец успел
-      // продать последнее) — НЕ прерываем всю очередь. Иначе один
-      // "плохой" чек будет вечно блокировать синхронизацию всех
-      // остальных, честных чеков, идущих следом. Просто переходим к
-      // следующему; несинхронизированный чек останется в очереди и
-      // будет виден владельцу (см. предупреждение в ответе).
+      // networkError — оставляем чек 'pending' как есть и просто идём
+      // дальше по очереди; он естественно попадёт в следующий цикл
+      // синхронизации. Не прерываем всю очередь целиком: иначе один
+      // "плохой" или временно недоступный чек будет вечно блокировать
+      // синхронизацию всех остальных, честных чеков, идущих следом.
     }
 
     if (successCount > 0) {
@@ -126,19 +143,32 @@ class SyncService {
       _notifyUser('☁️ Квитансияҳо ҳамоҳанг карда шудаанд: $successCount');
     }
 
+    if (rejectedCount > 0) {
+      // Раньше об этом не сообщалось вообще. Теперь владелец/продавец
+      // сразу видит, что часть чеков требует его внимания (например,
+      // нужно пополнить остатки), а не бесконечно тихо копится в логах
+      // сервера как повторяющаяся ошибка "недостаточно товара".
+      _notifyUser(
+        '⚠️ $rejectedCount чек(ҳо) рад карда шуд — санҷед тафсилот',
+        color: Colors.red,
+      );
+    }
+
     // Раз в сессию подчищаем старые синхронизированные чеки, чтобы
-    // локальная БД не росла бесконечно.
+    // локальная БД не росла бесконечно. 'failed' сюда не попадают — они
+    // ждут явного решения человека (обновить остатки/удалить/повторить).
     await _db.cleanupSyncedSales();
   }
 
   /// Ненавязчивое уведомление о фоновой синхронизации.
   /// Продавец не должен ничего делать руками — это просто индикатор,
-  /// что чеки, пробитые офлайн, успешно долетели до сервера.
-  void _notifyUser(String message) {
+  /// что чеки, пробитые офлайн, успешно долетели до сервера (или, при
+  /// [color] красном — что часть чеков требует его внимания).
+  void _notifyUser(String message, {Color color = Colors.blue}) {
     final context = ApiService.navigatorKey.currentContext;
     if (context == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.blue),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message), backgroundColor: color));
   }
 }

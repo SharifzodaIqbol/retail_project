@@ -3,6 +3,26 @@ import '../services/api_service.dart';
 
 enum _DatePreset { all, today, yesterday, week, month }
 
+// ─── Единая палитра экрана (взята из home_screen / _PaymentDialog) ─────────
+// Вынесено сюда, чтобы вкладка истории визуально совпадала с остальным
+// приложением. Если позже заведёте общий ThemeData/AppColors — просто
+// замените константы ниже на ссылки на него, виджеты трогать не придётся.
+class _Palette {
+  static const accent = Color(
+    0xFF4F6EF7,
+  ); // синий акцент — как на главном экране
+  static const darkText = Color(
+    0xFF1A1A2E,
+  ); // тёмный текст крупных сумм — как в диалоге оплаты
+  static const success = Color(0xFF27AE60); // зелёный — положительная сумма
+  static const successBg = Color(
+    0xFFEAF7EF,
+  ); // подложка под сумму дня, аналог "Бозгашт"
+  static const warning = Color(0xFFF39C12); // оранжевый — предупреждение/отмена
+  static const danger = Color(0xFFE74C3C);
+  static const grey = Colors.grey;
+}
+
 class HistoryScreen extends StatefulWidget {
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -103,6 +123,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
     return DateTime(year, month, day);
   }
 
+  // Достаём 'HH:MM' из created_at ('DD.MM.YYYY HH24:MI'), без падения на
+  // неожиданных форматах — просто возвращаем пусто, UI это учитывает.
+  String _saleTime(dynamic sale) {
+    final raw = (sale['created_at'] ?? '').toString();
+    if (raw.length < 16) return '';
+    return raw.substring(11, 16);
+  }
+
   List<dynamic> _applyFilters(List<dynamic> sales) {
     final minAmount = double.tryParse(
       _minAmountCtrl.text.trim().replaceAll(',', '.'),
@@ -169,7 +197,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             child: const Text('Қафо'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            style: ElevatedButton.styleFrom(backgroundColor: _Palette.danger),
             onPressed: () async {
               bool ok = await _apiService.cancelSale(saleId, controller.text);
               if (ok) {
@@ -205,8 +233,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final yesterday =
         '${yesterdayDt.day.toString().padLeft(2, '0')}.${yesterdayDt.month.toString().padLeft(2, '0')}.${yesterdayDt.year}';
 
-    if (dayKey == today) return 'Имрӯз: $dayKey';
-    if (dayKey == yesterday) return 'Дирӯз: $dayKey';
+    if (dayKey == today) return 'Имрӯз, $dayKey';
+    if (dayKey == yesterday) return 'Дирӯз, $dayKey';
     return dayKey;
   }
 
@@ -238,7 +266,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       label: Text(label),
       selected: selected,
       onSelected: (_) => setState(() => _datePreset = preset),
-      selectedColor: const Color(0xFF4F6EF7),
+      selectedColor: _Palette.accent,
       labelStyle: TextStyle(
         color: selected ? Colors.white : Colors.black87,
         fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
@@ -372,6 +400,162 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
+  // ─── Карточка дня ───────────────────────────────────────────────────────
+  // Сумма дня — доминирующий элемент; отменённые чеки вынесены отдельной
+  // строкой с предупреждающим цветом, а не спрятаны серым текстом.
+  Widget _buildDayHeader(String dayKey, List<dynamic> daySales) {
+    final dayTotal = _dayTotal(daySales);
+    final canceledCount = daySales
+        .where((s) => s['is_canceled'] ?? false)
+        .length;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const Icon(Icons.calendar_today, color: _Palette.accent, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _dayLabel(dayKey),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: _Palette.darkText,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${daySales.length} чек',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // Доминирующая сумма дня — крупнее и жирнее всего остального
+              // в карточке, как сумма чека в _PaymentDialog на главном экране.
+              Text(
+                '${dayTotal.toStringAsFixed(2)} сомонӣ',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: _Palette.success,
+                  fontSize: 19,
+                ),
+              ),
+              if (canceledCount > 0) ...[
+                const SizedBox(height: 3),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      size: 13,
+                      color: _Palette.warning,
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      'бекор: $canceledCount',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _Palette.warning,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Строка одного чека внутри дня. Единый паттерн "контент слева, деньги
+  // справа" — как сумма дня и как блок "Бозгашт" в диалоге оплаты.
+  Widget _buildSaleTile(dynamic sale) {
+    final bool isCanceled = sale['is_canceled'] ?? false;
+    final time = _saleTime(sale);
+    final amount = (sale['total_amount'] as num?)?.toDouble() ?? 0;
+
+    return InkWell(
+      onTap: isCanceled ? null : () => _showCancelDialog(sale['id']),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: Colors.grey.shade100)),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isCanceled ? Icons.receipt_long_outlined : Icons.receipt_long,
+              color: isCanceled ? Colors.grey.shade400 : _Palette.accent,
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Чек №${sale['id']}',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: isCanceled
+                          ? Colors.grey.shade500
+                          : _Palette.darkText,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    isCanceled
+                        ? 'Бекор карда шуд: ${sale['cancel_reason'] ?? ''}'
+                        : [
+                            if (time.isNotEmpty) time,
+                            'Фурӯшанда: ${sale['seller_name'] ?? sale['seller_id']}',
+                          ].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isCanceled
+                          ? _Palette.danger
+                          : Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${amount.toStringAsFixed(2)} сомонӣ',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: isCanceled ? Colors.grey.shade400 : _Palette.darkText,
+                decoration: isCanceled ? TextDecoration.lineThrough : null,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Icon(
+              isCanceled ? Icons.cancel : Icons.chevron_right,
+              size: 18,
+              color: isCanceled ? _Palette.danger : Colors.grey.shade400,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -386,7 +570,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           IconButton(
             icon: Icon(
               _hasActiveFilters ? Icons.filter_alt : Icons.filter_alt_outlined,
-              color: _hasActiveFilters ? const Color(0xFF4F6EF7) : null,
+              color: _hasActiveFilters ? _Palette.accent : null,
             ),
             tooltip: 'Филтр',
             onPressed: () =>
@@ -444,8 +628,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       // Открываем самый свежий день по умолчанию (только один раз).
                       if (!_initializedExpansion) {
                         _initializedExpansion = true;
-                        if (dayKeys.isNotEmpty)
+                        if (dayKeys.isNotEmpty) {
                           _expandedDays.add(dayKeys.first);
+                        }
                       }
 
                       return RefreshIndicator(
@@ -469,95 +654,45 @@ class _HistoryScreenState extends State<HistoryScreen> {
                             }
                             final dayKey = dayKeys[dayIndex];
                             final daySales = grouped[dayKey]!;
-                            final dayTotal = _dayTotal(daySales);
-                            final canceledCount = daySales
-                                .where((s) => s['is_canceled'] ?? false)
-                                .length;
 
                             return Card(
                               margin: const EdgeInsets.symmetric(
                                 horizontal: 10,
                                 vertical: 5,
                               ),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                side: BorderSide(color: Colors.grey.shade200),
+                              ),
                               clipBehavior: Clip.antiAlias,
-                              child: ExpansionTile(
-                                initiallyExpanded: _expandedDays.contains(
-                                  dayKey,
-                                ),
-                                onExpansionChanged: (expanded) {
-                                  setState(() {
-                                    if (expanded) {
-                                      _expandedDays.add(dayKey);
-                                    } else {
-                                      _expandedDays.remove(dayKey);
-                                    }
-                                  });
-                                },
-                                leading: const Icon(
-                                  Icons.calendar_today,
-                                  color: Color(0xFF4F6EF7),
-                                ),
-                                title: Text(
-                                  _dayLabel(dayKey),
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
+                              child: Theme(
+                                // Убираем стандартные разделительные линии
+                                // ExpansionTile, у нас свои — тоньше и только
+                                // между строками чеков.
+                                data: Theme.of(
+                                  context,
+                                ).copyWith(dividerColor: Colors.transparent),
+                                child: ExpansionTile(
+                                  tilePadding: EdgeInsets.zero,
+                                  childrenPadding: EdgeInsets.zero,
+                                  initiallyExpanded: _expandedDays.contains(
+                                    dayKey,
                                   ),
+                                  onExpansionChanged: (expanded) {
+                                    setState(() {
+                                      if (expanded) {
+                                        _expandedDays.add(dayKey);
+                                      } else {
+                                        _expandedDays.remove(dayKey);
+                                      }
+                                    });
+                                  },
+                                  title: _buildDayHeader(dayKey, daySales),
+                                  children: daySales
+                                      .map<Widget>(_buildSaleTile)
+                                      .toList(),
                                 ),
-                                subtitle: Text(
-                                  '${daySales.length} чек'
-                                  '${canceledCount > 0 ? ' · бекор карда шуд: $canceledCount' : ''}',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                trailing: Padding(
-                                  padding: const EdgeInsets.only(right: 4),
-                                  child: Text(
-                                    '${dayTotal.toStringAsFixed(2)} Сомонӣ',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                      color: Color(0xFF27AE60),
-                                      fontSize: 15,
-                                    ),
-                                  ),
-                                ),
-                                children: daySales.map<Widget>((sale) {
-                                  final bool isCanceled =
-                                      sale['is_canceled'] ?? false;
-
-                                  return ListTile(
-                                    leading: Icon(
-                                      Icons.receipt_long,
-                                      color: isCanceled
-                                          ? Colors.grey
-                                          : Colors.blue,
-                                    ),
-                                    title: Text(
-                                      'Чек №${sale['id']} — ${sale['total_amount']} Сомонӣ',
-                                    ),
-                                    subtitle: Text(
-                                      isCanceled
-                                          ? 'БЕКОР КАРДА ШУД: ${sale['cancel_reason']}'
-                                          : 'Фурӯшанда: ${sale['seller_name'] ?? sale['seller_id']}',
-                                    ),
-
-                                    // КНОПКА ВЫЗОВА ДИАЛОГА
-                                    trailing: isCanceled
-                                        ? const Icon(
-                                            Icons.cancel,
-                                            color: Colors.red,
-                                          )
-                                        : IconButton(
-                                            icon: const Icon(
-                                              Icons.undo,
-                                              color: Colors.orange,
-                                            ),
-                                            onPressed: () =>
-                                                _showCancelDialog(sale['id']),
-                                          ),
-                                  );
-                                }).toList(),
                               ),
                             );
                           },

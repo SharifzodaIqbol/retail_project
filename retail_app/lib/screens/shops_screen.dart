@@ -233,7 +233,7 @@ class _ShopsScreenState extends State<ShopsScreen> {
                               ),
                               const SizedBox(height: 8),
                               const Text(
-                                'Мағозаи аввал созед',
+                                'Мағозаи аввалро созед',
                                 style: TextStyle(color: Colors.grey),
                               ),
                             ],

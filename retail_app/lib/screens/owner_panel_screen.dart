@@ -25,10 +25,16 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
 
   final TextEditingController _employeeSearchCtrl = TextEditingController();
   String _employeeSearchQuery = '';
+  List<dynamic> _shops = [];
+  int _filterShopId = 0; // 0 = все магазины
 
   List<dynamic> get _filteredUsers {
-    if (_employeeSearchQuery.isEmpty) return _users;
-    return _users
+    var list = _users;
+    if (_filterShopId != 0) {
+      list = list.where((u) => u['shop_id'] == _filterShopId).toList();
+    }
+    if (_employeeSearchQuery.isEmpty) return list;
+    return list
         .where(
           (u) => (u['username'] ?? '').toString().toLowerCase().contains(
             _employeeSearchQuery,
@@ -60,12 +66,14 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
     _ownerUsername = prefs.getString('username');
 
     final users = await _api.getUsers();
+    final shops = await _api.getShops();
     final ownerData = users.firstWhere(
       (u) => u['role'] == 'owner',
       orElse: () => {},
     );
     setState(() {
       _users = users;
+      _shops = shops;
       _tgLinked = (ownerData['tg_chat_id'] ?? 0) != 0;
       _loading = false;
     });
@@ -307,9 +315,13 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
 
   // ─── Добавление сотрудника ────────────────────────────────────────────────
 
-  void _showAddUserDialog() {
+  void _showAddUserDialog() async {
     final usernameCtrl = TextEditingController();
     final pinCtrl = TextEditingController();
+    final shops = await _api.getShops();
+    final prefs = await SharedPreferences.getInstance();
+    int selectedShopId = prefs.getInt('shop_id') ?? 0;
+    if (!mounted) return;
 
     showDialog(
       context: context,
@@ -347,6 +359,29 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                         'Фурӯшанда инро ҳангоми ворид шудан ворид мекунад',
                   ),
                 ),
+                if (shops.length > 1) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    value: shops.any((s) => s['id'] == selectedShopId)
+                        ? selectedShopId
+                        : shops.first['id'],
+                    decoration: const InputDecoration(
+                      labelText: 'Мағоза',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: shops
+                        .map<DropdownMenuItem<int>>(
+                          (s) => DropdownMenuItem<int>(
+                            value: s['id'],
+                            child: Text(s['name'] ?? ''),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) setDialogState(() => selectedShopId = v);
+                    },
+                  ),
+                ],
               ],
             ),
           ),
@@ -373,6 +408,7 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                   '', // пароль пустой для seller'а
                   'seller',
                   pin: pinCtrl.text,
+                  shopId: selectedShopId,
                 );
                 if (!mounted) return;
                 if (ok) {
@@ -558,6 +594,34 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
+                  if (_shops.length > 1)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: SizedBox(
+                        height: 34,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            _ShopFilterChip(
+                              label: 'Ҳама',
+                              selected: _filterShopId == 0,
+                              onTap: () => setState(() => _filterShopId = 0),
+                            ),
+                            ..._shops.map(
+                              (s) => Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: _ShopFilterChip(
+                                  label: s['name'] ?? '',
+                                  selected: _filterShopId == s['id'],
+                                  onTap: () =>
+                                      setState(() => _filterShopId = s['id']),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   if (_users.length > 1)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 10),
@@ -613,6 +677,44 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
 }
 
 // ─── Вспомогательные виджеты ─────────────────────────────────────────────────
+
+class _ShopFilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ShopFilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF4F6EF7) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? const Color(0xFF4F6EF7) : Colors.grey.shade300,
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: selected ? Colors.white : Colors.black87,
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _SectionHeader extends StatelessWidget {
   final String title;
@@ -761,6 +863,25 @@ class _UserTile extends StatelessWidget {
                         fontSize: 12,
                       ),
                     ),
+                    if ((user['shop_name'] ?? '').toString().isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      const Icon(
+                        Icons.store,
+                        size: 13,
+                        color: Color(0xFF4F6EF7),
+                      ),
+                      const SizedBox(width: 2),
+                      Flexible(
+                        child: Text(
+                          user['shop_name'],
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF4F6EF7),
+                          ),
+                        ),
+                      ),
+                    ],
                     if (hasPin) ...[
                       const SizedBox(width: 8),
                       const Icon(Icons.pin, size: 13, color: Colors.green),

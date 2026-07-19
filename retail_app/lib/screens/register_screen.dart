@@ -310,25 +310,29 @@ class _RegisterHeader extends StatelessWidget {
                   color: Colors.white.withOpacity(0.16),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Icon(
-                  Icons.store_rounded,
-                  color: Colors.white,
-                  size: 28,
+                clipBehavior: Clip.antiAlias,
+                child: Image.asset(
+                  'assets/images/savidor.png', // <-- ОБЯЗАТЕЛЬНО замените на PNG или SVG
+                  // Если логотип квадратный, используйте cover, чтобы он заполнил всё место
+                  fit: BoxFit.cover,
+                  // Можно явно указать размеры, чтобы Flutter не гадал:
+                  width: double.infinity,
+                  height: double.infinity,
                 ),
               ),
               const SizedBox(height: 18),
               const Text(
-                'Савидор',
+                'Савдо + Идора = Савидор',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 28,
+                  fontSize: 20,
                   fontWeight: FontWeight.w800,
                   letterSpacing: -0.5,
                 ),
               ),
               const SizedBox(height: 4),
               Text(
-                'Мағозаи худро ба қайд гиред',
+                'Касса ва анбор дар як ҷо',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.85),
                   fontSize: 13.5,
