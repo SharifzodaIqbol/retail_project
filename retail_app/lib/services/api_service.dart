@@ -22,6 +22,29 @@ class RateLimitException implements Exception {
   String toString() => message;
 }
 
+/// Результат попытки отправить чек на сервер. Раньше sendSale возвращал
+/// голый bool, из-за чего реальный обрыв сети и бизнес-отказ сервера
+/// (например, "недостаточно товара ID: 12") обрабатывались одинаково —
+/// чек молча уходил в офлайн-очередь с пометкой "нет сети" и затем вечно
+/// повторял ту же самую попытку при каждом запуске приложения, никогда
+/// не сообщая пользователю о реальной причине.
+enum SaleSendStatus {
+  success,
+  networkError, // нет соединения / таймаут — имеет смысл повторить позже
+  rejected, // сервер ответил 4xx/5xx с конкретной бизнес-ошибкой — повторять бессмысленно без вмешательства человека
+}
+
+class SaleSendResult {
+  final SaleSendStatus status;
+  final String? errorMessage;
+
+  const SaleSendResult(this.status, {this.errorMessage});
+
+  bool get isSuccess => status == SaleSendStatus.success;
+  bool get isNetworkError => status == SaleSendStatus.networkError;
+  bool get isRejected => status == SaleSendStatus.rejected;
+}
+
 /// Универсальный контейнер для ответов с пагинацией от сервера.
 class PaginatedResult<T> {
   final List<T> data;
@@ -223,8 +246,9 @@ class ApiService {
     try {
       final prefs = await SharedPreferences.getInstance();
       final companyId = prefs.getInt('company_id') ?? 0;
+      final shopId = prefs.getInt('shop_id') ?? 0;
       if (companyId != 0) {
-        await getTerminalUsers(companyId);
+        await getTerminalUsers(companyId, shopId: shopId);
       }
     } catch (_) {}
   }
@@ -357,9 +381,17 @@ class ApiService {
 
   // ─── Продажи ─────────────────────────────────────────────────────────────
 
-  Future<bool> sendSale(Map<String, dynamic> saleData) async {
+  /// Отправляет чек на сервер и различает, ПОЧЕМУ не получилось:
+  /// - [SaleSendStatus.networkError] — реального ответа от сервера не было
+  ///   (обрыв связи, таймаут) — имеет смысл повторить позже автоматически.
+  /// - [SaleSendStatus.rejected] — сервер ответил, но отклонил чек
+  ///   (например 500 "недостаточно товара ID: 12", или 400/409 и т.п.) —
+  ///   повторная идентичная отправка даст ту же ошибку, поэтому вызывающий
+  ///   код не должен ретраить её молча.
+  Future<SaleSendResult> sendSale(Map<String, dynamic> saleData) async {
+    http.Response response;
     try {
-      final response = await http
+      response = await http
           .post(
             Uri.parse('$baseUrl/api/sales'),
             headers: await _getHeaders(),
@@ -371,16 +403,31 @@ class ApiService {
           // десятки секунд прямо на экране оплаты, вместо быстрого
           // перехода в офлайн-режим и сохранения чека локально.
           .timeout(const Duration(seconds: 8));
-      _checkSubscription(response.statusCode);
-      if (response.statusCode == 200) {
-        DataRefreshService.instance.notifySaleChanged();
-        DataRefreshService.instance.notifyAnalyticsChanged();
-        return true;
-      }
-      return false;
     } catch (e) {
-      return false;
+      // Исключение здесь означает, что ответа от сервера не было вообще
+      // (DNS/сокет/таймаут) — это настоящий сетевой сбой.
+      return const SaleSendResult(SaleSendStatus.networkError);
     }
+
+    _checkSubscription(response.statusCode);
+    if (response.statusCode == 200) {
+      DataRefreshService.instance.notifySaleChanged();
+      DataRefreshService.instance.notifyAnalyticsChanged();
+      return const SaleSendResult(SaleSendStatus.success);
+    }
+
+    // Сервер ответил (пусть и ошибкой) — значит связь есть, и это не
+    // сетевая проблема, а осознанный отказ бизнес-логики бэкенда.
+    String message = 'Сервер чекро рад кард (код ${response.statusCode})';
+    try {
+      final body = jsonDecode(response.body);
+      if (body is Map && body['error'] != null) {
+        message = body['error'].toString();
+      }
+    } catch (_) {
+      // Тело ответа не JSON — оставляем сообщение по умолчанию.
+    }
+    return SaleSendResult(SaleSendStatus.rejected, errorMessage: message);
   }
 
   /// Получает страницу истории продаж.
@@ -422,10 +469,16 @@ class ApiService {
 
   // ─── Аналитика ───────────────────────────────────────────────────────────
 
-  Future<List<dynamic>> getTopProducts({int limit = 5}) async {
+  Future<List<dynamic>> getTopProducts({
+    int limit = 5,
+    String period = 'today',
+    DateTime? from,
+    DateTime? to,
+  }) async {
     try {
+      final query = _periodQuery(period, from, to);
       final response = await http.get(
-        Uri.parse('$baseUrl/api/analytics/top-products?limit=$limit'),
+        Uri.parse('$baseUrl/api/analytics/top-products?limit=$limit&$query'),
         headers: await _getHeaders(),
       );
       _checkSubscription(response.statusCode);
@@ -464,10 +517,15 @@ class ApiService {
     }
   }
 
-  Future<List<dynamic>> getSellerStats() async {
+  Future<List<dynamic>> getSellerStats({
+    String period = 'today',
+    DateTime? from,
+    DateTime? to,
+  }) async {
     try {
+      final query = _periodQuery(period, from, to);
       final response = await http.get(
-        Uri.parse('$baseUrl/api/analytics/sellers'),
+        Uri.parse('$baseUrl/api/analytics/sellers?$query'),
         headers: await _getHeaders(),
       );
       _checkSubscription(response.statusCode);
@@ -504,6 +562,7 @@ class ApiService {
     String password,
     String role, {
     String? pin,
+    int? shopId,
   }) async {
     try {
       final body = {
@@ -511,6 +570,7 @@ class ApiService {
         'password': password,
         'role': role,
         if (pin != null && pin.isNotEmpty) 'pin': pin,
+        if (shopId != null && shopId != 0) 'shop_id': shopId,
       };
       final response = await http.post(
         Uri.parse('$baseUrl/api/users'),
@@ -557,11 +617,18 @@ class ApiService {
   /// Загружает список продавцов для терминала.
   /// Онлайн: API + кэшируем результат.
   /// Офлайн: возвращает кэшированный список из SQLite.
-  Future<List<dynamic>> getTerminalUsers(int companyId) async {
+  Future<List<dynamic>> getTerminalUsers(int companyId, {int? shopId}) async {
     if (ConnectivityService.instance.isOnline) {
       try {
+        final shopParam = (shopId != null && shopId != 0)
+            ? '&shop_id=$shopId'
+            : '';
         final response = await http
-            .get(Uri.parse('$baseUrl/terminal/users?company_id=$companyId'))
+            .get(
+              Uri.parse(
+                '$baseUrl/terminal/users?company_id=$companyId$shopParam',
+              ),
+            )
             .timeout(const Duration(seconds: 10));
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body) as List<dynamic>;
@@ -696,10 +763,15 @@ class ApiService {
 
   // ─── Вспомогательные ─────────────────────────────────────────────────────
 
-  Future<bool> createSale(Map<String, dynamic> saleData) async =>
+  /// Раньше возвращал bool; теперь возвращает [SaleSendResult], чтобы
+  /// вызывающий код (HomeScreen._checkout, _syncOfflineSales) мог отличить
+  /// сетевой сбой от отказа сервера и не прятать реальную причину под
+  /// общим "нет сети".
+  Future<SaleSendResult> createSale(Map<String, dynamic> saleData) async =>
       sendSale(saleData);
-  Future<bool> createSaleFromRawData(Map<String, dynamic> saleData) async =>
-      sendSale(saleData);
+  Future<SaleSendResult> createSaleFromRawData(
+    Map<String, dynamic> saleData,
+  ) async => sendSale(saleData);
 
   /// Поиск по названию.
   /// Онлайн: запрос к API.
@@ -751,10 +823,26 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>?> getAnalyticsSummary(String period) async {
+  /// Собирает query-параметры периода: либо готовый period=today/week/month,
+  /// либо period=custom&from=YYYY-MM-DD&to=YYYY-MM-DD для произвольного диапазона.
+  String _periodQuery(String period, DateTime? from, DateTime? to) {
+    if (period == 'custom' && from != null && to != null) {
+      String d(DateTime x) =>
+          '${x.year.toString().padLeft(4, '0')}-${x.month.toString().padLeft(2, '0')}-${x.day.toString().padLeft(2, '0')}';
+      return 'period=custom&from=${d(from)}&to=${d(to)}';
+    }
+    return 'period=$period';
+  }
+
+  Future<Map<String, dynamic>?> getAnalyticsSummary(
+    String period, {
+    DateTime? from,
+    DateTime? to,
+  }) async {
     try {
+      final query = _periodQuery(period, from, to);
       final response = await http.get(
-        Uri.parse('$baseUrl/api/analytics/summary?period=$period'),
+        Uri.parse('$baseUrl/api/analytics/summary?$query'),
         headers: await _getHeaders(),
       );
       _checkSubscription(response.statusCode);
@@ -781,6 +869,26 @@ class ApiService {
     }
   }
 
+  /// Сохраняет токен и данные выбранного магазина после создания/переключения —
+  /// все последующие запросы (товары, продажи, склад, должники, аналитика)
+  /// автоматически пойдут в рамках этого магазина, так как shop_id зашит в JWT.
+  Future<void> _applyShopSwitch(Map<String, dynamic> data) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (data['token'] != null) {
+      await prefs.setString('jwt_token', data['token']);
+    }
+    if (data['shop_id'] != null) {
+      await prefs.setInt('shop_id', data['shop_id']);
+    }
+    final shopName = data['shop']?['name'] ?? data['name'];
+    if (shopName != null) {
+      await prefs.setString('shop_name', shopName);
+    }
+    await prefs.setBool('needs_shop_setup', false);
+  }
+
+  /// Создать новый магазин. Он сразу становится активным (владелец получает
+  /// новый токен в рамках этого магазина и переключается на него).
   Future<Map<String, dynamic>?> createShop(String name) async {
     try {
       final response = await http.post(
@@ -789,10 +897,33 @@ class ApiService {
         body: jsonEncode({'name': name}),
       );
       _checkSubscription(response.statusCode);
-      if (response.statusCode == 201) return jsonDecode(response.body);
+      if (response.statusCode == 201) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        await _applyShopSwitch(data);
+        return data;
+      }
       return null;
     } catch (e) {
       return null;
+    }
+  }
+
+  /// Переключиться на другой уже существующий магазин.
+  Future<bool> switchShop(int id) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/shops/$id/switch'),
+        headers: await _getHeaders(),
+      );
+      _checkSubscription(response.statusCode);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        await _applyShopSwitch(data);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
     }
   }
 

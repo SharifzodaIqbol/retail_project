@@ -24,20 +24,29 @@ class DatabaseHelper {
     final dbPath = kIsWeb ? filePath : join(await getDatabasesPath(), filePath);
     return await openDatabase(
       dbPath,
-      version: 2,
+      version: 3,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
   }
 
   Future _createDB(Database db, int version) async {
-    // Офлайн-чеки (была в v1)
+    // Офлайн-чеки (была в v1).
+    // status: 'pending' (ждёт отправки/повтора) | 'synced' (успешно ушёл на
+    // сервер) | 'failed' (сервер отклонил чек бизнес-ошибкой — например,
+    // недостаточно товара на складе — и повторная отправка без вмешательства
+    // человека не имеет смысла, поэтому такие чеки НЕ ретраятся автоматически).
+    // is_synced оставлен для обратной совместимости со старым кодом/данными,
+    // но новый код должен ориентироваться на status.
     await db.execute('''
       CREATE TABLE offline_sales(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sale_data TEXT NOT NULL,
         created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-        is_synced INTEGER DEFAULT 0
+        is_synced INTEGER DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        last_error TEXT,
+        retry_count INTEGER NOT NULL DEFAULT 0
       )
     ''');
 
@@ -105,6 +114,40 @@ class DatabaseHelper {
         )
       ''');
     }
+
+    if (oldVersion < 3) {
+      // Раньше offline_sales знала только "синхронизирован / нет"
+      // (is_synced 0/1). Из-за этого чек, отклонённый сервером бизнес-
+      // ошибкой (например, "недостаточно товара ID: 12"), было невозможно
+      // отличить от чека, не отправленного из-за реального обрыва сети —
+      // оба выглядели как is_synced = 0 и оба вечно попадали в повторную
+      // отправку (см. getUnsyncedSales/_syncOfflineSales), заново падая с
+      // той же ошибкой при каждом запуске приложения, без единого
+      // сообщения об этом пользователю.
+      //
+      // status разводит эти два случая: 'pending' по-прежнему ретраится
+      // автоматически, а 'failed' — нет, и ждёт решения человека (обновить
+      // остатки, отредактировать чек или удалить его).
+      await db
+          .execute(
+            "ALTER TABLE offline_sales ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
+          )
+          .catchError((_) {});
+      await db
+          .execute('ALTER TABLE offline_sales ADD COLUMN last_error TEXT')
+          .catchError((_) {});
+      await db
+          .execute(
+            'ALTER TABLE offline_sales ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0',
+          )
+          .catchError((_) {});
+
+      // Существующие уже синхронизированные чеки (is_synced = 1) помечаем
+      // как synced, чтобы они не попали под getUnsyncedSales/pending-выборки.
+      await db.execute(
+        "UPDATE offline_sales SET status = 'synced' WHERE is_synced = 1",
+      );
+    }
   }
 
   // ─── Офлайн-чеки ─────────────────────────────────────────────────────────
@@ -114,25 +157,82 @@ class DatabaseHelper {
     await db.insert('offline_sales', {
       'sale_data': jsonEncode(saleData),
       'is_synced': 0,
+      'status': 'pending',
     });
   }
 
+  /// Чеки, которые ещё стоит пытаться отправить автоматически. НЕ включает
+  /// 'failed' — те отклонены сервером бизнес-ошибкой и не уйдут сами по
+  /// себе от повторной идентичной попытки.
   Future<List<Map<String, dynamic>>> getUnsyncedSales() async {
     final db = await instance.database;
-    return await db.query('offline_sales', where: 'is_synced = 0');
+    return await db.query('offline_sales', where: "status = 'pending'");
+  }
+
+  /// Чеки, которые сервер отклонил окончательно (нужно решение человека:
+  /// обновить остатки, отредактировать или удалить чек).
+  Future<List<Map<String, dynamic>>> getFailedSales() async {
+    final db = await instance.database;
+    return await db.query(
+      'offline_sales',
+      where: "status = 'failed'",
+      orderBy: 'created_at DESC',
+    );
   }
 
   Future<void> markSaleAsSynced(int id) async {
     final db = await instance.database;
     await db.update(
       'offline_sales',
-      {'is_synced': 1},
+      {'is_synced': 1, 'status': 'synced'},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Помечает чек как отклонённый сервером бизнес-ошибкой (не сетевой
+  /// сбой) — такой чек больше не участвует в автоматических повторах.
+  Future<void> markSaleAsFailed(int id, String error) async {
+    final db = await instance.database;
+    await db.update(
+      'offline_sales',
+      {'status': 'failed', 'last_error': error},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Увеличивает счётчик неудачных сетевых попыток, не меняя статус —
+  /// чек остаётся 'pending' и будет повторён снова.
+  Future<void> incrementRetryCount(int id) async {
+    final db = await instance.database;
+    await db.rawUpdate(
+      'UPDATE offline_sales SET retry_count = retry_count + 1 WHERE id = ?',
+      [id],
+    );
+  }
+
+  /// Удаляет один чек из очереди (например, по решению пользователя — если
+  /// он признан ошибочным/дублем и отправлять его больше не нужно).
+  Future<void> deleteOfflineSale(int id) async {
+    final db = await instance.database;
+    await db.delete('offline_sales', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Возвращает чек обратно в очередь на отправку (например, после того как
+  /// пользователь пополнил остатки товара и хочет повторить попытку вручную).
+  Future<void> retryFailedSale(int id) async {
+    final db = await instance.database;
+    await db.update(
+      'offline_sales',
+      {'status': 'pending', 'last_error': null},
       where: 'id = ?',
       whereArgs: [id],
     );
   }
 
   /// Удаляет синхронизированные чеки старше [days] дней, чтобы БД не росла.
+  /// 'failed' сюда не попадают — они ждут явного решения пользователя.
   Future<void> cleanupSyncedSales({int days = 30}) async {
     final db = await instance.database;
     final cutoff =
@@ -140,7 +240,7 @@ class DatabaseHelper {
         1000;
     await db.delete(
       'offline_sales',
-      where: 'is_synced = 1 AND created_at < ?',
+      where: "status = 'synced' AND created_at < ?",
       whereArgs: [cutoff],
     );
   }

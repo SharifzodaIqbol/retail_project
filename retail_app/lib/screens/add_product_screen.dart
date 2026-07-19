@@ -126,7 +126,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
               TextFormField(
                 controller: _barcodeController,
                 decoration: InputDecoration(
-                  labelText: 'Штрихкод',
+                  labelText:
+                      'Штрихкод (ихтиёрӣ)', // Можно добавить надпись "необязательно"
                   prefixIcon: const Icon(Icons.qr_code),
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.camera_alt, color: Colors.blue),
@@ -143,12 +144,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
                     },
                   ),
                 ),
-                validator: (v) {
-                  if (v == null || v.trim().isEmpty) {
-                    return 'Скан кунед ё кодро дохил кунед';
-                  }
-                  return null;
-                },
+                // Валидатор удален или возвращает null, поэтому ругаться не будет
               ),
               const SizedBox(height: 12),
               Row(

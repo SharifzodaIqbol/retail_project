@@ -330,7 +330,7 @@ class _BrandHeader extends StatelessWidget {
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: Image.asset(
-                  'assets/icon/savidor.png', // <-- ОБЯЗАТЕЛЬНО замените на PNG или SVG
+                  'assets/images/savidor.png', // <-- ОБЯЗАТЕЛЬНО замените на PNG или SVG
                   // Если логотип квадратный, используйте cover, чтобы он заполнил всё место
                   fit: BoxFit.cover,
                   // Можно явно указать размеры, чтобы Flutter не гадал:
@@ -340,10 +340,10 @@ class _BrandHeader extends StatelessWidget {
               ),
               const SizedBox(height: 18),
               const Text(
-                'Савидор',
+                'Савдо + Идора = Савидор',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 28,
+                  fontSize: 20,
                   fontWeight: FontWeight.w800,
                   letterSpacing: -0.5,
                 ),

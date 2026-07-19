@@ -33,6 +33,12 @@ class AuthService {
       await prefs.setString('username', data['username'] ?? username);
       await prefs.setInt('company_id', data['company_id'] ?? 0);
       await prefs.setString('company_name', data['company_name'] ?? '');
+      await prefs.setInt('shop_id', data['shop_id'] ?? 0);
+      await prefs.setString('shop_name', data['shop_name'] ?? '');
+      await prefs.setBool(
+        'needs_shop_setup',
+        data['needs_shop_setup'] ?? false,
+      );
       return data;
     }
 
@@ -98,6 +104,9 @@ class AuthService {
     await prefs.remove('username');
     await prefs.remove('company_id');
     await prefs.remove('company_name');
+    await prefs.remove('shop_id');
+    await prefs.remove('shop_name');
+    await prefs.remove('needs_shop_setup');
     await prefs.remove('terminal_mode');
   }
 

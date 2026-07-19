@@ -11,6 +11,7 @@ import 'screens/history_screen.dart';
 import 'screens/terminal_screen.dart';
 import 'screens/owner_panel_screen.dart';
 import 'screens/debtors_screen.dart';
+import 'screens/create_first_shop_screen.dart';
 import 'services/api_service.dart';
 import 'services/connectivity_service.dart';
 import 'services/sync_service.dart';
@@ -42,7 +43,7 @@ class RetailApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Савидор',
+      title: 'Savidor',
       navigatorKey: ApiService.navigatorKey,
       theme: ThemeData(
         primaryColor: const Color(0xFF4F6EF7),
@@ -53,25 +54,27 @@ class RetailApp extends StatelessWidget {
         fontFamily: 'Inter',
         useMaterial3: true,
       ),
-      home: const _Bootstrapper(),
+      home: const AppBootstrapper(),
     );
   }
 }
 
-class _Bootstrapper extends StatefulWidget {
-  const _Bootstrapper();
+class AppBootstrapper extends StatefulWidget {
+  const AppBootstrapper({super.key});
 
   @override
-  State<_Bootstrapper> createState() => _BootstrapperState();
+  State<AppBootstrapper> createState() => _AppBootstrapperState();
 }
 
-class _BootstrapperState extends State<_Bootstrapper> {
+class _AppBootstrapperState extends State<AppBootstrapper> {
   bool _checking = true;
   bool _loggedIn = false;
   bool _terminalMode = false;
   String _role = '';
   int _companyId = 0;
   String _companyName = '';
+  bool _needsShopSetup = false;
+  int _shopId = 0;
 
   @override
   void initState() {
@@ -86,6 +89,8 @@ class _BootstrapperState extends State<_Bootstrapper> {
     final terminalMode = prefs.getBool('terminal_mode') ?? false;
     final companyId = prefs.getInt('company_id') ?? 0;
     final companyName = prefs.getString('company_name') ?? '';
+    final needsShopSetup = prefs.getBool('needs_shop_setup') ?? false;
+    final shopId = prefs.getInt('shop_id') ?? 0;
 
     setState(() {
       _loggedIn = token.isNotEmpty;
@@ -93,6 +98,8 @@ class _BootstrapperState extends State<_Bootstrapper> {
       _terminalMode = terminalMode;
       _companyId = companyId;
       _companyName = companyName;
+      _needsShopSetup = needsShopSetup;
+      _shopId = shopId;
       _checking = false;
     });
   }
@@ -101,11 +108,15 @@ class _BootstrapperState extends State<_Bootstrapper> {
     final prefs = await SharedPreferences.getInstance();
     final companyId = prefs.getInt('company_id') ?? 0;
     final companyName = prefs.getString('company_name') ?? '';
+    final needsShopSetup = prefs.getBool('needs_shop_setup') ?? false;
+    final shopId = prefs.getInt('shop_id') ?? 0;
     setState(() {
       _loggedIn = true;
       _role = role;
       _companyId = companyId;
       _companyName = companyName;
+      _needsShopSetup = needsShopSetup;
+      _shopId = shopId;
     });
     // Сразу после входа прогреваем офлайн-кэш целиком, не дожидаясь
     // первого фонового цикла — так офлайн-режим готов с первой минуты
@@ -141,6 +152,7 @@ class _BootstrapperState extends State<_Bootstrapper> {
       return TerminalScreen(
         companyId: _companyId,
         companyName: _companyName,
+        shopId: _shopId,
         onSellerLogin: (token, role, username) async {
           final prefs = await SharedPreferences.getInstance();
           // Офлайн-токен не сохраняем в SharedPreferences — только имя и роль
@@ -159,10 +171,15 @@ class _BootstrapperState extends State<_Bootstrapper> {
       return LoginScreen(onLogin: _onLogin);
     }
 
+    if (_role == 'owner' && _needsShopSetup && !_terminalMode) {
+      return CreateFirstShopScreen(onDone: _checkAuth);
+    }
+
     if (_terminalMode && _role == 'owner') {
       return TerminalScreen(
         companyId: _companyId,
         companyName: _companyName,
+        shopId: _shopId,
         onSellerLogin: (token, role, username) async {
           final prefs = await SharedPreferences.getInstance();
           if (token != 'offline_token') {

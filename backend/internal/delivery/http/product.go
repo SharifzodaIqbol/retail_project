@@ -77,6 +77,7 @@ func parseImportFloat(raw string) (float64, error) {
 // Товар с уже существующим в компании штрихкодом обновляется, иначе создаётся новый.
 func (h *Handler) importProducts(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
+	shopID := c.MustGet("shop_id").(int)
 
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
@@ -145,9 +146,9 @@ func (h *Handler) importProducts(c *gin.Context) {
 		name := strings.TrimSpace(get(0))
 		barcode := strings.TrimSpace(get(1))
 
-		if name == "" || barcode == "" {
+		if name == "" {
 			result.Errors = append(result.Errors, domain.ProductImportError{
-				Row: rowNum, Message: "Не заполнены обязательные поля 'название' и/или 'штрихкод'",
+				Row: rowNum, Message: "Ячейкаи 'Ном' холи аст, номи махсулотро нависед",
 			})
 			continue
 		}
@@ -175,8 +176,9 @@ func (h *Handler) importProducts(c *gin.Context) {
 
 		p := domain.Product{
 			CompanyID: companyID,
+			ShopID:    shopID,
 			Name:      name,
-			Barcode:   barcode,
+			Barcode:   &barcode,
 			BuyPrice:  buyPrice,
 			SellPrice: sellPrice,
 			Stock:     stock,
@@ -201,9 +203,10 @@ func (h *Handler) importProducts(c *gin.Context) {
 
 func (h *Handler) getProductByBarcode(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
+	shopID := c.MustGet("shop_id").(int)
 	barcode := c.Param("barcode")
 
-	p, err := h.productRepo.GetByBarcode(context.Background(), companyID, barcode)
+	p, err := h.productRepo.GetByBarcode(context.Background(), companyID, shopID, barcode)
 	if err != nil {
 		logWarn(c, "Товар по штрихкоду не найден", "company_id", companyID, "barcode", barcode, "error", err.Error())
 		c.JSON(http.StatusNotFound, gin.H{"error": "Товар не найден"})
@@ -214,13 +217,14 @@ func (h *Handler) getProductByBarcode(c *gin.Context) {
 
 func (h *Handler) searchProducts(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
+	shopID := c.MustGet("shop_id").(int)
 	name := strings.TrimSpace(c.Query("q"))
 	if name == "" {
 		c.JSON(http.StatusOK, []domain.Product{})
 		return
 	}
 
-	products, err := h.productRepo.SearchByName(context.Background(), companyID, name)
+	products, err := h.productRepo.SearchByName(context.Background(), companyID, shopID, name)
 	if err != nil {
 		logErr(c, err, "Ошибка поиска товаров по названию", "company_id", companyID, "query", name)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка поиска"})
@@ -233,11 +237,12 @@ func (h *Handler) searchProducts(c *gin.Context) {
 // Возвращает страницу товаров. Параметры: page (с 1), limit (макс. 200).
 func (h *Handler) getAllProducts(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
+	shopID := c.MustGet("shop_id").(int)
 
 	page, limit := parsePagination(c, 50, 200)
 	offset := (page - 1) * limit
 
-	products, total, err := h.productRepo.GetAll(context.Background(), companyID, limit, offset)
+	products, total, err := h.productRepo.GetAll(context.Background(), companyID, shopID, limit, offset)
 	if err != nil {
 		logErr(c, err, "Ошибка получения списка товаров", "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Ошибка получения товаров"})
@@ -261,6 +266,7 @@ func (h *Handler) createProduct(c *gin.Context) {
 	p.Unit = unit
 
 	p.CompanyID = c.MustGet("company_id").(int)
+	p.ShopID = c.MustGet("shop_id").(int)
 	if err := h.productRepo.Create(context.Background(), p); err != nil {
 		logErr(c, err, "Ошибка создания товара", "company_id", p.CompanyID, "barcode", p.Barcode)
 		c.JSON(500, gin.H{"error": "Ошибка создания товара"})
@@ -273,6 +279,7 @@ func (h *Handler) updateInventory(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	role, _ := c.Get("role")
 	companyID := c.MustGet("company_id").(int)
+	shopID := c.MustGet("shop_id").(int)
 	userID, _ := c.Get("user_id")
 
 	var input struct {
@@ -292,7 +299,7 @@ func (h *Handler) updateInventory(c *gin.Context) {
 		return
 	}
 
-	if err := h.productRepo.UpdateInventory(context.Background(), id, companyID, input.AddStock, input.SellPrice, input.BuyPrice); err != nil {
+	if err := h.productRepo.UpdateInventory(context.Background(), id, companyID, shopID, input.AddStock, input.SellPrice, input.BuyPrice); err != nil {
 		if err == repository.ErrNotFound {
 			logWarn(c, "Обновление склада: товар не найден", "product_id", id, "company_id", companyID)
 			c.JSON(404, gin.H{"error": "Товар не найден"})
@@ -306,7 +313,7 @@ func (h *Handler) updateInventory(c *gin.Context) {
 	if isSeller && h.tgBot != nil {
 		go func() {
 			ctx := context.Background()
-			productName, err := h.productRepo.GetNameByID(ctx, id, companyID)
+			productName, err := h.productRepo.GetNameByID(ctx, id, companyID, shopID)
 			if err != nil {
 				return
 			}
@@ -329,8 +336,9 @@ func (h *Handler) deleteProduct(c *gin.Context) {
 		return
 	}
 	companyID := c.MustGet("company_id").(int)
+	shopID := c.MustGet("shop_id").(int)
 	id, _ := strconv.Atoi(c.Param("id"))
-	if err := h.productRepo.SoftDelete(context.Background(), id, companyID); err != nil {
+	if err := h.productRepo.SoftDelete(context.Background(), id, companyID, shopID); err != nil {
 		if err == repository.ErrNotFound {
 			logWarn(c, "Удаление товара: товар не найден", "product_id", id, "company_id", companyID)
 			c.JSON(404, gin.H{"error": "Товар не найден"})

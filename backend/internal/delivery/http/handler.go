@@ -136,6 +136,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 			shops.POST("", h.createShop)
 			shops.PUT("/:id", h.updateShop)
 			shops.DELETE("/:id", h.deleteShop)
+			shops.POST("/:id/switch", h.switchShop)
 		}
 
 		// Telegram привязка (только owner)

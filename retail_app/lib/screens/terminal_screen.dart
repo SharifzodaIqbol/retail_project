@@ -13,6 +13,7 @@ bool isRateLimited(int? seconds) => seconds != null && seconds > 0;
 class TerminalScreen extends StatefulWidget {
   final int companyId;
   final String companyName;
+  final int shopId;
   final void Function(String token, String role, String username) onSellerLogin;
   final VoidCallback onOwnerExitTerminal;
 
@@ -20,6 +21,7 @@ class TerminalScreen extends StatefulWidget {
     super.key,
     required this.companyId,
     required this.companyName,
+    this.shopId = 0,
     required this.onSellerLogin,
     required this.onOwnerExitTerminal,
   });
@@ -69,7 +71,10 @@ class _TerminalScreenState extends State<TerminalScreen> {
 
   Future<void> _loadUsers() async {
     setState(() => _loading = true);
-    final users = await _api.getTerminalUsers(widget.companyId);
+    final users = await _api.getTerminalUsers(
+      widget.companyId,
+      shopId: widget.shopId,
+    );
 
     // Если сеть недоступна — getTerminalUsers вернёт кэш
     final online = ConnectivityService.instance.isOnline;
@@ -127,34 +132,43 @@ class _TerminalScreenState extends State<TerminalScreen> {
               padding: const EdgeInsets.fromLTRB(24, 32, 24, 0),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment:
+                    CrossAxisAlignment.start, // Выравниваем по верхней линии
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Ҳолати терминал',
-                        style: TextStyle(
-                          color: Colors.white54,
-                          fontSize: 13,
-                          letterSpacing: 1.2,
+                  // Оборачиваем в Expanded, чтобы текст не выталкивал кнопку
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Ҳолати терминал',
+                          style: TextStyle(
+                            color: Colors.white54,
+                            fontSize: 13,
+                            letterSpacing: 1.2,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.companyName,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w700,
+                        const SizedBox(height: 4),
+                        Text(
+                          widget.companyName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          maxLines:
+                              2, // Ограничим двумя строками на всякий случай
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
+                  const SizedBox(width: 12), // Отступ между текстом и кнопкой
                   GestureDetector(
                     onLongPress: _exitToOwner,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
+                        horizontal: 10,
                         vertical: 8,
                       ),
                       decoration: BoxDecoration(
@@ -162,18 +176,20 @@ class _TerminalScreenState extends State<TerminalScreen> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Row(
+                        mainAxisSize: MainAxisSize
+                            .min, // Чтобы Row не растягивался во всю ширину
                         children: [
                           Icon(
                             Icons.lock_outline,
                             color: Colors.white54,
-                            size: 16,
+                            size: 14, // Немного уменьшили иконку
                           ),
-                          SizedBox(width: 6),
+                          SizedBox(width: 4),
                           Text(
-                            'Нигоҳ дошта истед. барои баромадан',
+                            'Баромадан', // Укоротили текст для экономии места
                             style: TextStyle(
                               color: Colors.white54,
-                              fontSize: 12,
+                              fontSize: 11,
                             ),
                           ),
                         ],

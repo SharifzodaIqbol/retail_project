@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import '../services/api_service.dart';
 
 /// Долговая книга — список должников с возможностью:
-///   • добавить нового должника
+///   • добавить нового должника (с защитой от дубликатов)
 ///   • внести частичную оплату (вычесть)
 ///   • добавить новый долг (добавить)
 ///   • полностью закрыть (оплатить всё)
@@ -62,6 +62,16 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
     });
   }
 
+  // Функция для красивого отображения телефона в карточке (+992 918 12-34-56)
+  String _formatDisplayPhone(String phone) {
+    if (phone.isEmpty) return '';
+    final clean = phone.replaceAll(RegExp(r'\D'), '');
+    if (clean.length == 12 && clean.startsWith('992')) {
+      return '+992 ${clean.substring(3, 6)} ${clean.substring(6, 8)}-${clean.substring(8, 10)}-${clean.substring(10, 12)}';
+    }
+    return phone;
+  }
+
   // ─── Добавить должника ──────────────────────────────────────────────────
 
   void _showAddDebtorDialog() {
@@ -70,6 +80,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
     final amountCtrl = TextEditingController();
     final noteCtrl = TextEditingController();
     String? nameError;
+    String? phoneError;
     String? amountError;
     bool saving = false;
 
@@ -96,10 +107,24 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                 TextField(
                   controller: phoneCtrl,
                   keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(
+                  inputFormatters: [
+                    // Разрешаем ввод только цифр, но через кастомный форматтер добавляем пробелы/дефисы
+                    FilteringTextInputFormatter.allow(RegExp(r'[\d\s\-]')),
+                    PhoneInputFormatter(),
+                  ],
+                  onChanged: (_) => setDialogState(() => phoneError = null),
+                  decoration: InputDecoration(
                     labelText: 'Телефон (ихтиёрӣ)',
-                    border: OutlineInputBorder(),
-                    prefixText: '+992 ',
+                    border: const OutlineInputBorder(),
+                    errorText: phoneError,
+                    hintText: '918 12-34-56',
+                    prefixIcon: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(width: 12),
+                        Text('🇹🇯 +992 ', style: TextStyle(fontSize: 16)),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -144,22 +169,81 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                   : () async {
                       bool hasError = false;
 
-                      if (nameCtrl.text.trim().isEmpty) {
+                      // Очистка от лишних пробелов в имени
+                      final cleanName = nameCtrl.text.trim().replaceAll(
+                        RegExp(r'\s+'),
+                        ' ',
+                      );
+                      // Извлекаем строго только цифры из телефона для валидации и базы
+                      final phoneDigits = phoneCtrl.text.replaceAll(
+                        RegExp(r'\D'),
+                        '',
+                      );
+                      final formattedPhone = phoneDigits.isEmpty
+                          ? ''
+                          : '+992$phoneDigits';
+
+                      // 1. Валидация имени
+                      if (cleanName.isEmpty) {
                         setDialogState(
                           () => nameError = 'Номи қарздорро ворид кунед',
                         );
                         hasError = true;
-                      } else if (nameCtrl.text.trim().length < 2) {
+                      } else if (cleanName.length < 2) {
                         setDialogState(() => nameError = 'Ном хеле кӯтоҳ аст');
                         hasError = true;
                       }
 
+                      // 2. Валидация длины телефона
+                      if (phoneDigits.isNotEmpty && phoneDigits.length != 9) {
+                        setDialogState(
+                          () =>
+                              phoneError = 'Рақам бояд аз 9 рақам иборат бошад',
+                        );
+                        hasError = true;
+                      }
+
+                      // 3. Проверка на дубликаты в существующей базе (локально)
+                      if (!hasError) {
+                        final lowercaseName = cleanName.toLowerCase();
+                        for (var debtor in _debtors) {
+                          final existingName = (debtor['full_name'] ?? '')
+                              .toString()
+                              .trim()
+                              .toLowerCase();
+                          final existingPhone = (debtor['phone'] ?? '')
+                              .toString()
+                              .trim()
+                              .replaceAll(RegExp(r'\D'), '');
+
+                          if (existingName == lowercaseName) {
+                            setDialogState(
+                              () =>
+                                  nameError = 'Қарздор бо ин ном аллакай ҳаст',
+                            );
+                            hasError = true;
+                            break;
+                          }
+                          if (phoneDigits.isNotEmpty &&
+                              existingPhone == '992$phoneDigits') {
+                            setDialogState(
+                              () => phoneError =
+                                  'Қарздор бо ин телефон аллакай ҳаст',
+                            );
+                            hasError = true;
+                            break;
+                          }
+                        }
+                      }
+
+                      // 4. Валидация числового ввода суммы
                       final rawAmount = amountCtrl.text.trim().isEmpty
                           ? '0'
                           : amountCtrl.text.trim();
                       final amount = double.tryParse(
                         rawAmount.replaceAll(',', '.'),
                       );
+
                       if (amount == null) {
                         setDialogState(
                           () => amountError = 'Рақами нодуруст (мас: 150.00)',
@@ -170,6 +254,11 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                           () => amountError = 'Қарз манфӣ буда наметавонад',
                         );
                         hasError = true;
+                      } else if (amount > 10000000) {
+                        setDialogState(
+                          () => amountError = 'Маблағ хеле калон аст',
+                        );
+                        hasError = true;
                       }
 
                       if (hasError) return;
@@ -177,8 +266,8 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                       setDialogState(() => saving = true);
 
                       final result = await _api.createDebtor(
-                        fullName: nameCtrl.text.trim(),
-                        phone: phoneCtrl.text.trim(),
+                        fullName: cleanName,
+                        phone: formattedPhone,
                         initialDebt: amount!,
                         note: noteCtrl.text.trim(),
                       );
@@ -315,13 +404,13 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: isPay ? Colors.green : const Color(0xFF4F6EF7),
               ),
-              onPressed: saving
+              onPressed: saving || (isPay && totalDebt <= 0)
                   ? null
                   : () async {
                       final raw = amountCtrl.text.trim().replaceAll(',', '.');
                       final amount = double.tryParse(raw);
 
-                      if (amount == null || raw.isEmpty) {
+                      if (raw.isEmpty || amount == null) {
                         setDialogState(
                           () => amountError =
                               'Маблағро дуруст ворид кунед (мас: 50.00)',
@@ -331,6 +420,12 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                       if (amount <= 0) {
                         setDialogState(
                           () => amountError = 'Маблағ бояд аз нол зиёд бошад',
+                        );
+                        return;
+                      }
+                      if (amount > 10000000) {
+                        setDialogState(
+                          () => amountError = 'Маблағ хеле калон аст',
                         );
                         return;
                       }
@@ -717,6 +812,9 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                                     _showOperationDialog(debtor, 'take'),
                                 onHistory: () => _showHistory(debtor),
                                 onDelete: () => _deleteDebtor(debtor),
+                                formattedPhone: _formatDisplayPhone(
+                                  debtor['phone'] ?? '',
+                                ),
                               );
                             },
                           ),
@@ -737,6 +835,7 @@ class _DebtorCard extends StatelessWidget {
   final VoidCallback onTake;
   final VoidCallback onHistory;
   final VoidCallback onDelete;
+  final String formattedPhone; // Передаем уже отформатированный номер
 
   const _DebtorCard({
     required this.debtor,
@@ -745,6 +844,7 @@ class _DebtorCard extends StatelessWidget {
     required this.onTake,
     required this.onHistory,
     required this.onDelete,
+    required this.formattedPhone,
   });
 
   @override
@@ -794,9 +894,9 @@ class _DebtorCard extends StatelessWidget {
                           fontSize: 15,
                         ),
                       ),
-                      if ((debtor['phone'] ?? '').isNotEmpty)
+                      if (formattedPhone.isNotEmpty)
                         Text(
-                          debtor['phone'],
+                          formattedPhone,
                           style: const TextStyle(
                             color: Colors.grey,
                             fontSize: 12,
@@ -949,6 +1049,39 @@ class _IconBtn extends StatelessWidget {
           child: Icon(icon, size: 18, color: color),
         ),
       ),
+    );
+  }
+}
+
+// ─── Форматтер маски для удобного ввода номера ──────────────────────────────
+
+class PhoneInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    // Вытаскиваем только чистые цифры из новой строки
+    final text = newValue.text.replaceAll(RegExp(r'\D'), '');
+
+    // Ограничиваем ввод строго 9 цифрами
+    final cleanText = text.length > 9 ? text.substring(0, 9) : text;
+
+    final buffer = StringBuffer();
+    for (int i = 0; i < cleanText.length; i++) {
+      buffer.write(cleanText[i]);
+      // Формат: 918 12-34-56
+      if (i == 2) {
+        buffer.write(' ');
+      } else if (i == 4 || i == 6) {
+        buffer.write('-');
+      }
+    }
+
+    final string = buffer.toString();
+    return newValue.copyWith(
+      text: string,
+      selection: TextSelection.collapsed(offset: string.length),
     );
   }
 }

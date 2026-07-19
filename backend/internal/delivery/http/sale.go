@@ -20,8 +20,9 @@ func (h *Handler) executeSale(c *gin.Context) {
 		return
 	}
 	companyID := c.MustGet("company_id").(int)
+	shopID := c.MustGet("shop_id").(int)
 	sellerID := c.MustGet("user_id").(int)
-	saleID, lowStockItems, err := h.saleRepo.ExecuteSale(context.Background(), companyID, sellerID, input.Items, input.Total)
+	saleID, lowStockItems, err := h.saleRepo.ExecuteSale(context.Background(), companyID, shopID, sellerID, input.Items, input.Total)
 	if err != nil {
 		logErr(c, err, "Ошибка оформления продажи", "company_id", companyID, "seller_id", sellerID, "items_count", len(input.Items), "total", input.Total)
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -44,11 +45,12 @@ func (h *Handler) executeSale(c *gin.Context) {
 // Возвращает страницу истории продаж. Параметры: page (с 1), limit (макс. 200).
 func (h *Handler) getSalesHistory(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
+	shopID := c.MustGet("shop_id").(int)
 
 	page, limit := parsePagination(c, 50, 200)
 	offset := (page - 1) * limit
 
-	history, total, err := h.saleRepo.GetAll(context.Background(), companyID, limit, offset)
+	history, total, err := h.saleRepo.GetAll(context.Background(), companyID, shopID, limit, offset)
 	if err != nil {
 		logErr(c, err, "Ошибка получения истории продаж", "company_id", companyID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения истории продаж"})
@@ -62,6 +64,7 @@ func (h *Handler) getSalesHistory(c *gin.Context) {
 // (и тем самым изменить остатки на складе) чужой чек, просто подобрав id.
 func (h *Handler) cancelSale(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
+	shopID := c.MustGet("shop_id").(int)
 	idStr := c.Param("id")
 	id, _ := strconv.Atoi(idStr)
 	var input struct {
@@ -73,14 +76,14 @@ func (h *Handler) cancelSale(c *gin.Context) {
 		return
 	}
 
-	totalAmount, err := h.saleRepo.GetSaleTotal(context.Background(), companyID, id)
+	totalAmount, err := h.saleRepo.GetSaleTotal(context.Background(), companyID, shopID, id)
 	if err != nil {
 		logWarn(c, "Отмена продажи: чек не найден", "sale_id", id, "company_id", companyID, "error", err.Error())
 		c.JSON(404, gin.H{"error": "Чек не найден"})
 		return
 	}
 
-	if err = h.saleRepo.CancelSale(context.Background(), companyID, id, input.Reason); err != nil {
+	if err = h.saleRepo.CancelSale(context.Background(), companyID, shopID, id, input.Reason); err != nil {
 		logErr(c, err, "Ошибка отмены продажи", "sale_id", id, "company_id", companyID, "reason", input.Reason)
 		c.JSON(500, gin.H{"error": "Не удалось отменить чек: " + err.Error()})
 		return
