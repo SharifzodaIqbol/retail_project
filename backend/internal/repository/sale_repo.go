@@ -22,10 +22,10 @@ func NewSaleRepository(db *pgxpool.Pool) *SaleRepository {
 // ВАЖНО: company_id и shop_id записываются в sales, и каждая позиция чека
 // проверяется на принадлежность тому же магазину (нельзя продать и списать
 // со склада товар другого магазина/компании, передав чужой product_id).
-func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID, shopID int, sellerID int, items []domain.SaleItem, total float64) (int, []domain.Product, error) {
+func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID, shopID int, sellerID int, items []domain.SaleItem, total float64) (int, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return 0, nil, err
+		return 0, err
 	}
 	defer tx.Rollback(ctx)
 
@@ -34,10 +34,8 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID, shopID int,
 		"INSERT INTO sales (company_id, shop_id, seller_id, total_amount) VALUES ($1, $2, $3, $4) RETURNING id",
 		companyID, shopID, sellerID, total).Scan(&saleID)
 	if err != nil {
-		return 0, nil, err
+		return 0, err
 	}
-
-	var lowStockProducts []domain.Product
 
 	for _, item := range items {
 		_, err = tx.Exec(ctx, `INSERT INTO sale_items 
@@ -45,7 +43,7 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID, shopID int,
 						   VALUES ($1, $2, $3, $4, $5)`,
 			saleID, companyID, item.ProductID, item.Quantity, item.PriceAtSale)
 		if err != nil {
-			return 0, nil, err
+			return 0, err
 		}
 
 		var p domain.Product
@@ -57,14 +55,10 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID, shopID int,
 			item.Quantity, item.ProductID, companyID, shopID).Scan(&p.Name, &p.Stock)
 
 		if err != nil {
-			return 0, nil, fmt.Errorf("недостаточно товара ID: %d", item.ProductID)
-		}
-
-		if p.Stock < 10 {
-			lowStockProducts = append(lowStockProducts, p)
+			return 0, fmt.Errorf("Норасоии махсулот: %s", p.Name)
 		}
 	}
-	return saleID, lowStockProducts, tx.Commit(ctx)
+	return saleID, tx.Commit(ctx)
 }
 
 func (r *SaleRepository) GetTodayTotal(ctx context.Context, companyID int) (domain.DailyStats, error) {
@@ -184,7 +178,7 @@ func (r *SaleRepository) CancelSale(ctx context.Context, companyID, shopID int, 
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("чек не найден")
+		return fmt.Errorf("чек ёфт нашуд`")
 	}
 
 	updateStockQuery := `

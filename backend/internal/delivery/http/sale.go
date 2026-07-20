@@ -22,21 +22,12 @@ func (h *Handler) executeSale(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 	shopID := c.MustGet("shop_id").(int)
 	sellerID := c.MustGet("user_id").(int)
-	saleID, lowStockItems, err := h.saleRepo.ExecuteSale(context.Background(), companyID, shopID, sellerID, input.Items, input.Total)
+	saleID, err := h.saleRepo.ExecuteSale(context.Background(), companyID, shopID, sellerID, input.Items, input.Total)
 	if err != nil {
 		logErr(c, err, "Ошибка оформления продажи", "company_id", companyID, "seller_id", sellerID, "items_count", len(input.Items), "total", input.Total)
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-
-	go func() {
-		ownerID, _ := h.userRepo.GetOwnerChatID(context.Background(), companyID)
-		if ownerID != 0 {
-			for _, item := range lowStockItems {
-				h.tgBot.SendLowStockAlert(ownerID, item.Name, item.Stock, item.Unit)
-			}
-		}
-	}()
 
 	c.JSON(200, gin.H{"id": saleID})
 }

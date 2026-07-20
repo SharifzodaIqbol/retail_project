@@ -187,13 +187,6 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 
 // --- Уведомления ---
 
-func (b *Bot) SendSaleNotification(chatID int64, saleID int, total float64) {
-	msg := fmt.Sprintf("💰 **Фурӯши нав!**\nЧек: №%d\nМаблағ **%.2f сомонӣ**", saleID, total)
-	if _, err := b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown); err != nil {
-		logger.L.Error("Telegram: не удалось отправить уведомление о продаже", "chat_id", chatID, "sale_id", saleID, "error", err.Error())
-	}
-}
-
 func (b *Bot) SendCancelNotification(chatID int64, saleID int, reason string, total float64) {
 	msg := fmt.Sprintf("⚠️ **БЕКОР КАРДАНИ ЧЕК!**\nЧек: №%d\nМаблағ: %.2f\nСабаб: %s", saleID, total, reason)
 	if _, err := b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown); err != nil {
@@ -208,15 +201,6 @@ func (b *Bot) SendDailyReport(chatID int64, totalDay float64, salesCount int) {
 	}
 }
 
-func (b *Bot) SendLowStockAlert(chatID int64, productName string, remainingStock float64, unit string) {
-	msg := fmt.Sprintf("⚠️ **ДИҚҚАТ: МАҲСУЛОТ КАМ МОНД!**\n\n📦 Маҳсулот: %s\n📉 Боқи монд: **%g** %s",
-		productName, remainingStock, unit)
-	if _, err := b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown); err != nil {
-		logger.L.Error("Telegram: не удалось отправить предупреждение о низком остатке", "chat_id", chatID, "product", productName, "error", err.Error())
-	}
-}
-
-// SendInventoryChangeNotification — уведомление владельцу, когда продавец
 func (b *Bot) SendInventoryChangeNotification(chatID int64, sellerName, productName string, addStock float64, reason string) {
 	sign := "+"
 	if addStock < 0 {
