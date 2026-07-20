@@ -17,9 +17,7 @@ func NewProductRepository(db *pgxpool.Pool) *ProductRepository {
 
 func (r *ProductRepository) Create(ctx context.Context, p domain.Product) error {
 	query := `INSERT INTO products 
-	(company_id, shop_id, name, barcode, buy_price, sell_price, stock, unit) 
-	VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8)`
-
+	(company_id, shop_id, name, barcode, buy_price, sell_price, stock, unit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	_, err := r.db.Exec(ctx, query, p.CompanyID, p.ShopID, p.Name, p.Barcode, p.BuyPrice, p.SellPrice, p.Stock, p.Unit)
 	return err
 }

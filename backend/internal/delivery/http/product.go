@@ -256,6 +256,9 @@ func (h *Handler) createProduct(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+	if p.Barcode != nil && strings.TrimSpace(*p.Barcode) == "" {
+		p.Barcode = nil
+	}
 
 	unit, err := normalizeUnit(p.Unit)
 	if err != nil {
