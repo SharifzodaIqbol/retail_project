@@ -521,7 +521,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         : [
                             if (time.isNotEmpty) time,
                             'Фурӯшанда: ${sale['seller_name'] ?? sale['seller_id']}',
-                          ].join(' · '),
+                          ].join(' | '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(

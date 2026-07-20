@@ -462,12 +462,6 @@ class _InventoryScreenState extends State<InventoryScreen>
 
                               final p = _filtered[i];
                               final stockColor = _stockColor(p.stock);
-                              final margin = p.sellPrice > 0 && p.buyPrice > 0
-                                  ? ((p.sellPrice - p.buyPrice) /
-                                            p.sellPrice *
-                                            100)
-                                        .toStringAsFixed(0)
-                                  : '0';
 
                               return Container(
                                 decoration: BoxDecoration(
@@ -496,7 +490,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        'Харид: ${p.buyPrice.toStringAsFixed(2)} | Фурӯш: ${p.sellPrice.toStringAsFixed(2)} | Маржа: $margin%',
+                                        'Харид: ${p.buyPrice.toStringAsFixed(2)} | Фурӯш: ${p.sellPrice.toStringAsFixed(2)}',
                                         style: const TextStyle(
                                           fontSize: 12,
                                           color: Colors.grey,

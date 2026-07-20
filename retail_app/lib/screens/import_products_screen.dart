@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 
@@ -25,11 +27,24 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
     if (picked == null || picked.files.isEmpty) return;
 
     final file = picked.files.first;
-    if (file.bytes == null) {
+    List<int>? bytes = file.bytes;
+
+    // Читаем байты с диска, если они равны null (актуально для Android/iOS при больших файлах)
+    if (bytes == null && file.path != null && !kIsWeb) {
+      try {
+        bytes = await File(file.path!).readAsBytes();
+      } catch (e) {
+        bytes = null;
+      }
+    }
+
+    if (bytes == null) {
+      if (!mounted) return;
       setState(() => _error = 'Файлро хонда нашуд.');
       return;
     }
 
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -37,12 +52,14 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
       _pickedFileName = file.name;
     });
 
-    final response = await _api.importProductsExcel(file.bytes!, file.name);
+    final response = await _api.importProductsExcel(bytes, file.name);
 
+    // Безопасный вызов setState после асинхронного запроса к API
+    if (!mounted) return;
     setState(() {
       _loading = false;
       if (response == null) {
-        _error = 'Файл насб нашуд. Шояд шумо ба интернет пайваст нестед.';
+        _error = 'Файл боргузорӣ нашуд. Шояд шумо ба интернет пайваст нестед.';
       } else if (response.containsKey('error')) {
         _error = response['error'].toString();
       } else {

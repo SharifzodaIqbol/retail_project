@@ -126,8 +126,8 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    _debounce = Timer(const Duration(milliseconds: 250), () async {
-      if (query.length < 1) {
+    _debounce = Timer(const Duration(milliseconds: 150), () async {
+      if (query.length < 2) {
         setState(() => _suggestions = []);
         return;
       }
@@ -748,7 +748,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         return ListTile(
                           title: Text(p.name),
                           subtitle: Text(
-                            '${p.sellPrice.toStringAsFixed(2)} сомонӣ. ${p.stock} ${p.unitLabel}.',
+                            '${p.sellPrice.toStringAsFixed(2)} сомонӣ.',
                             style: const TextStyle(fontSize: 12),
                           ),
                           leading: Container(
