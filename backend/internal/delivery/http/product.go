@@ -305,6 +305,11 @@ func (h *Handler) updateInventory(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Товар не найден"})
 			return
 		}
+		if err == repository.ErrInsufficientStock {
+			logWarn(c, "Обновление склада: недостаточно товара для уменьшения", "product_id", id, "company_id", companyID, "add_stock", input.AddStock)
+			c.JSON(409, gin.H{"error": "Миқдор дар анбор кофӣ нест"})
+			return
+		}
 		logErr(c, err, "Ошибка обновления склада товара", "product_id", id, "company_id", companyID)
 		c.JSON(500, gin.H{"error": "Не удалось обновить склад"})
 		return
