@@ -251,7 +251,7 @@ class _MainShellState extends State<MainShell> {
       items.add(
         _NavItem(
           icon: Icons.manage_accounts,
-          label: 'Идоракунӣ',
+          label: 'Идора',
           screen: OwnerPanelScreen(onEnterTerminal: widget.onEnterTerminal),
         ),
       );

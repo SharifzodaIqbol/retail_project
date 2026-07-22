@@ -24,7 +24,7 @@ class DatabaseHelper {
     final dbPath = kIsWeb ? filePath : join(await getDatabasesPath(), filePath);
     return await openDatabase(
       dbPath,
-      version: 3,
+      version: 5,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -63,8 +63,13 @@ class DatabaseHelper {
         cached_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
       )
     ''');
+    // Частичный уникальный индекс: штрихкод должен быть уникален, только
+    // если он реально задан. Товары без штрихкода (barcode = '', допустимо
+    // с тех пор как backend разрешил NULL barcode) не должны конфликтовать
+    // друг с другом — иначе при apsert'е второй такой товар вытесняет из
+    // кэша первый через ConflictAlgorithm.replace.
     await db.execute(
-      'CREATE UNIQUE INDEX idx_product_barcode ON product_cache(barcode)',
+      "CREATE UNIQUE INDEX idx_product_barcode ON product_cache(barcode) WHERE barcode != ''",
     );
 
     // Кэш пользователей терминала (продавцы)
@@ -75,6 +80,62 @@ class DatabaseHelper {
         role TEXT NOT NULL,
         pin_hash TEXT,
         cached_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+      )
+    ''');
+
+    await _createOfflineCatalogTables(db);
+  }
+
+  /// Таблицы офлайн-кэша для Истории продаж и Должников (задача: офлайн-режим
+  /// для этих двух разделов). Вынесено в отдельный метод, т.к. используется
+  /// и при создании новой БД, и при миграции существующей (oldVersion < 4).
+  Future<void> _createOfflineCatalogTables(Database db) async {
+    // Кэш истории продаж (read-only офлайн-просмотр).
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sales_cache(
+        id INTEGER PRIMARY KEY,
+        data TEXT NOT NULL,
+        cached_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+      )
+    ''');
+
+    // Кэш списка должников. total_debt здесь может отличаться от последнего
+    // ответа сервера, если поверх применена ещё не синхронизированная
+    // офлайн-операция (см. applyLocalDebtOperation/insertLocalDebtor).
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS debtors_cache(
+        id INTEGER PRIMARY KEY,
+        data TEXT NOT NULL,
+        pending INTEGER NOT NULL DEFAULT 0,
+        cached_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+      )
+    ''');
+
+    // Кэш истории операций по конкретному должнику.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS debt_history_cache(
+        debtor_id INTEGER NOT NULL,
+        entry_id INTEGER NOT NULL,
+        data TEXT NOT NULL,
+        cached_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        PRIMARY KEY (debtor_id, entry_id)
+      )
+    ''');
+
+    // Очередь офлайн-операций с должниками (создание должника / взял-оплатил),
+    // аналог offline_sales, но для раздела "Должники".
+    // op_type: 'create' | 'operation'.
+    // local_debtor_id: для 'create' — временный отрицательный id, присвоенный
+    // локально до синхронизации; для 'operation' — реальный id должника.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS offline_debtor_ops(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        op_type TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        local_debtor_id INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending',
+        last_error TEXT,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
       )
     ''');
   }
@@ -101,7 +162,7 @@ class DatabaseHelper {
         )
       ''');
       await db.execute(
-        'CREATE UNIQUE INDEX IF NOT EXISTS idx_product_barcode ON product_cache(barcode)',
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_product_barcode ON product_cache(barcode) WHERE barcode != ''",
       );
 
       await db.execute('''
@@ -146,6 +207,27 @@ class DatabaseHelper {
       // как synced, чтобы они не попали под getUnsyncedSales/pending-выборки.
       await db.execute(
         "UPDATE offline_sales SET status = 'synced' WHERE is_synced = 1",
+      );
+    }
+
+    if (oldVersion < 4) {
+      // Добавляем офлайн-кэш для Истории продаж и Должников — раньше эти
+      // два раздела не работали без сети вообще.
+      await _createOfflineCatalogTables(db);
+    }
+
+    if (oldVersion < 5) {
+      // Раньше на product_cache(barcode) висел ПОЛНЫЙ уникальный индекс.
+      // Backend разрешил barcode = NULL, на клиенте он превращается в ''
+      // (см. _normalizeProduct), и если товаров без штрихкода становилось
+      // больше одного, каждый следующий такой товар при upsert (INSERT ...
+      // ConflictAlgorithm.replace) конфликтовал по индексу с предыдущим и
+      // ЗАМЕЩАЛ его — из офлайн-кэша пропадали все товары без штрихкода,
+      // кроме последнего сохранённого. Меняем индекс на частичный, чтобы
+      // уникальность штрихкода требовалась только когда он реально задан.
+      await db.execute('DROP INDEX IF EXISTS idx_product_barcode');
+      await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_product_barcode ON product_cache(barcode) WHERE barcode != ''",
       );
     }
   }
@@ -347,6 +429,19 @@ class DatabaseHelper {
     _rebuildBarcodeIndex();
   }
 
+  /// Удаляет один товар из офлайн-кэша (вызывать только после успешного
+  /// подтверждения удаления сервером — сам по себе в офлайн-очередь не
+  /// ставится, см. [ApiService.deleteProduct]). Без этого удалённый на
+  /// сервере товар "зависал" бы в офлайн-каталоге до следующего полного
+  /// refreshOfflineCache().
+  Future<void> removeCachedProduct(int id) async {
+    await _ensureMemLoaded();
+    final db = await instance.database;
+    await db.delete('product_cache', where: 'id = ?', whereArgs: [id]);
+    _memProducts!.removeWhere((e) => e['id'] == id);
+    _rebuildBarcodeIndex();
+  }
+
   /// Возвращает все товары из кэша.
   ///
   /// Важно: порядок должен совпадать с тем, что отдаёт сервер в онлайне
@@ -490,5 +585,251 @@ class DatabaseHelper {
   String _hashPin(String pin) {
     final bytes = utf8.encode(pin + '_pos_salt_2026');
     return sha256.convert(bytes).toString();
+  }
+
+  // ─── Кэш истории продаж (офлайн-просмотр) ────────────────────────────────
+
+  /// Полностью пересобирает кэш истории продаж (как cacheProducts для
+  /// товаров) — используется при полном обходе всех страниц в
+  /// refreshOfflineCache().
+  Future<void> cacheSales(List<Map<String, dynamic>> sales) async {
+    final db = await instance.database;
+    final batch = db.batch();
+    batch.delete('sales_cache');
+    for (final s in sales) {
+      final id = s['id'];
+      if (id == null) continue;
+      batch.insert('sales_cache', {
+        'id': id,
+        'data': jsonEncode(s),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  /// Точечно обновляет кэш только просмотренными чеками (одна страница),
+  /// не трогая остальную историю — аналог upsertCachedProducts.
+  Future<void> upsertCachedSales(List<Map<String, dynamic>> sales) async {
+    if (sales.isEmpty) return;
+    final db = await instance.database;
+    final batch = db.batch();
+    for (final s in sales) {
+      final id = s['id'];
+      if (id == null) continue;
+      batch.insert('sales_cache', {
+        'id': id,
+        'data': jsonEncode(s),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  /// Возвращает все закэшированные чеки, отсортированные как в онлайне
+  /// (сервер отдаёт последние чеки первыми — сортируем по id по убыванию).
+  Future<List<Map<String, dynamic>>> getCachedSales() async {
+    final db = await instance.database;
+    final rows = await db.query('sales_cache', orderBy: 'id DESC');
+    return rows
+        .map((r) => jsonDecode(r['data'] as String) as Map<String, dynamic>)
+        .toList();
+  }
+
+  // ─── Кэш должников (офлайн-просмотр + офлайн-операции) ──────────────────
+
+  Future<void> cacheDebtors(List<Map<String, dynamic>> debtors) async {
+    final db = await instance.database;
+    final batch = db.batch();
+    // Не трогаем локально ожидающие синхронизации записи (pending = 1) —
+    // их удалит/обновит логика синхронизации, а не полная пересборка кэша.
+    batch.delete('debtors_cache', where: 'pending = 0');
+    for (final d in debtors) {
+      final id = d['id'];
+      if (id == null) continue;
+      batch.insert('debtors_cache', {
+        'id': id,
+        'data': jsonEncode(d),
+        'pending': 0,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<void> upsertCachedDebtors(List<Map<String, dynamic>> debtors) async {
+    if (debtors.isEmpty) return;
+    final db = await instance.database;
+    final batch = db.batch();
+    for (final d in debtors) {
+      final id = d['id'];
+      if (id == null) continue;
+      batch.insert('debtors_cache', {
+        'id': id,
+        'data': jsonEncode(d),
+        'pending': 0,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  /// Возвращает всех должников из кэша (синхронизированных + ожидающих
+  /// отправки), отсортированных по убыванию долга — как обычно ожидает
+  /// увидеть пользователь (сначала те, кто должен больше).
+  Future<List<Map<String, dynamic>>> getCachedDebtors() async {
+    final db = await instance.database;
+    final rows = await db.query('debtors_cache');
+    final list = rows
+        .map((r) => jsonDecode(r['data'] as String) as Map<String, dynamic>)
+        .toList();
+    list.sort((a, b) {
+      final da = (a['total_debt'] as num?)?.toDouble() ?? 0;
+      final db2 = (b['total_debt'] as num?)?.toDouble() ?? 0;
+      return db2.compareTo(da);
+    });
+    return list;
+  }
+
+  /// Добавляет в кэш должника, созданного офлайн (с временным
+  /// отрицательным id), помеченного как pending — чтобы список сразу
+  /// показал его пользователю, не дожидаясь синхронизации.
+  Future<void> insertLocalDebtor(Map<String, dynamic> debtor) async {
+    final db = await instance.database;
+    await db.insert('debtors_cache', {
+      'id': debtor['id'],
+      'data': jsonEncode(debtor),
+      'pending': 1,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// Применяет ещё не синхронизированную операцию (взял/оплатил) к
+  /// закэшированной сумме долга, чтобы список должников офлайн сразу
+  /// отражал изменение, не дожидаясь ответа сервера.
+  Future<void> applyLocalDebtOperation(
+    int debtorId,
+    double amount,
+    String type,
+  ) async {
+    final db = await instance.database;
+    final rows = await db.query(
+      'debtors_cache',
+      where: 'id = ?',
+      whereArgs: [debtorId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return;
+    final data =
+        jsonDecode(rows.first['data'] as String) as Map<String, dynamic>;
+    final current = (data['total_debt'] as num?)?.toDouble() ?? 0.0;
+    data['total_debt'] = type == 'pay' ? current - amount : current + amount;
+    await db.update(
+      'debtors_cache',
+      {'data': jsonEncode(data)},
+      where: 'id = ?',
+      whereArgs: [debtorId],
+    );
+  }
+
+  /// Убирает временную запись локально созданного должника из кэша после
+  /// того, как реальный (с настоящим id) должник пришёл с сервера при
+  /// синхронизации.
+  Future<void> removeLocalDebtor(int tempId) async {
+    final db = await instance.database;
+    await db.delete('debtors_cache', where: 'id = ?', whereArgs: [tempId]);
+  }
+
+  // ─── Кэш истории операций конкретного должника ───────────────────────────
+
+  Future<void> cacheDebtHistory(
+    int debtorId,
+    List<Map<String, dynamic>> entries,
+  ) async {
+    final db = await instance.database;
+    final batch = db.batch();
+    batch.delete(
+      'debt_history_cache',
+      where: 'debtor_id = ?',
+      whereArgs: [debtorId],
+    );
+    for (final e in entries) {
+      final entryId = e['id'];
+      if (entryId == null) continue;
+      batch.insert('debt_history_cache', {
+        'debtor_id': debtorId,
+        'entry_id': entryId,
+        'data': jsonEncode(e),
+      });
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<List<Map<String, dynamic>>> getCachedDebtHistory(int debtorId) async {
+    final db = await instance.database;
+    final rows = await db.query(
+      'debt_history_cache',
+      where: 'debtor_id = ?',
+      whereArgs: [debtorId],
+      orderBy: 'entry_id DESC',
+    );
+    return rows
+        .map((r) => jsonDecode(r['data'] as String) as Map<String, dynamic>)
+        .toList();
+  }
+
+  // ─── Очередь офлайн-операций с должниками ────────────────────────────────
+
+  /// Ставит операцию в очередь на отправку при восстановлении связи.
+  /// Возвращает id записи в очереди.
+  Future<int> insertOfflineDebtorOp(
+    String opType,
+    Map<String, dynamic> payload, {
+    int? localDebtorId,
+  }) async {
+    final db = await instance.database;
+    return await db.insert('offline_debtor_ops', {
+      'op_type': opType,
+      'payload': jsonEncode(payload),
+      'local_debtor_id': localDebtorId,
+      'status': 'pending',
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getUnsyncedDebtorOps() async {
+    final db = await instance.database;
+    return await db.query(
+      'offline_debtor_ops',
+      where: "status = 'pending'",
+      orderBy: 'created_at ASC',
+    );
+  }
+
+  Future<void> markDebtorOpSynced(int id) async {
+    final db = await instance.database;
+    await db.update(
+      'offline_debtor_ops',
+      {'status': 'synced'},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> markDebtorOpFailed(int id, String error) async {
+    final db = await instance.database;
+    await db.update(
+      'offline_debtor_ops',
+      {'status': 'failed', 'last_error': error},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Удаляет синхронизированные операции старше [days] дней.
+  Future<void> cleanupSyncedDebtorOps({int days = 30}) async {
+    final db = await instance.database;
+    final cutoff =
+        DateTime.now().subtract(Duration(days: days)).millisecondsSinceEpoch ~/
+        1000;
+    await db.delete(
+      'offline_debtor_ops',
+      where: "status = 'synced' AND created_at < ?",
+      whereArgs: [cutoff],
+    );
   }
 }

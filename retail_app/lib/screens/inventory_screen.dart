@@ -174,6 +174,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                   controller: amountCtrl,
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
+                    signed: true,
                   ),
                   onChanged: (_) {
                     _amountError = null;
@@ -181,13 +182,13 @@ class _InventoryScreenState extends State<InventoryScreen>
                   },
                   decoration: InputDecoration(
                     labelText:
-                        'Илова кардан (${product.unitLabel}) — 0 барои тағир надодан',
-                    prefixIcon: const Icon(Icons.add_box),
+                        'Тағйири анбор (${product.unitLabel}) — 0 барои тағир надодан',
+                    prefixIcon: const Icon(Icons.sync_alt),
                     border: const OutlineInputBorder(),
                     errorText: _amountError,
-                    helperText: product.unit == 'kg'
-                        ? 'Адади касрӣ иҷозат дода мешавад, мас: 2.5'
-                        : null,
+                    helperText:
+                        'Барои илова "+10", барои кам кардан "-5" нависед'
+                        '${product.unit == 'kg' ? ' (адади касрӣ иҷозат аст, мас: -2.5)' : ''}',
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -275,15 +276,16 @@ class _InventoryScreenState extends State<InventoryScreen>
                               amountCtrl.text.isEmpty ? '0' : amountCtrl.text,
                             );
                             if (amount == null) {
-                              _amountError = 'Рақами нодуруст (мас: 10 ё 2.5)';
-                              hasError = true;
-                            } else if (amount < 0) {
-                              _amountError = 'Миқдор манфӣ буда наметавонад';
+                              _amountError =
+                                  'Рақами нодуруст (мас: 10, -5 ё 2.5)';
                               hasError = true;
                             } else if (product.unit == 'pcs' &&
-                                amount > 0 &&
                                 amount != amount.truncateToDouble()) {
                               _amountError = 'Барои "дона" танҳо ададҳои бутун';
+                              hasError = true;
+                            } else if (product.stock + amount < 0) {
+                              _amountError =
+                                  'Миқдор аз анбори мавҷуда (${product.stock}) зиёд аст';
                               hasError = true;
                             }
 
@@ -375,6 +377,53 @@ class _InventoryScreenState extends State<InventoryScreen>
         },
       ),
     );
+  }
+
+  // Удаление товара — только для владельца (сервер тоже это проверяет и
+  // вернёт 403 продавцу, но кнопку продавцу лучше вообще не показывать).
+  Future<void> _confirmDeleteProduct(Product product) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Нест кардани маҳсулот'),
+        content: Text(
+          '"${product.name}"-ро аз анбор нест кардан мехоҳед? Ин амалро баргардонидан мумкин нест.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Бекор кардан'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Нест кардан'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final ok = await _api.deleteProduct(product.id);
+    if (!mounted) return;
+
+    if (ok) {
+      setState(() => _products.removeWhere((p) => p.id == product.id));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Маҳсулот нест карда шуд.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Нест кардан муяссар нашуд. Пайвастшавиро санҷед.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   Color _stockColor(double stock) {
@@ -541,6 +590,15 @@ class _InventoryScreenState extends State<InventoryScreen>
                                         ),
                                         onPressed: () => _showRestockDialog(p),
                                       ),
+                                      if (_role == 'owner')
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                            color: Colors.red,
+                                          ),
+                                          onPressed: () =>
+                                              _confirmDeleteProduct(p),
+                                        ),
                                     ],
                                   ),
                                 ),

@@ -251,6 +251,70 @@ class ApiService {
         await getTerminalUsers(companyId, shopId: shopId);
       }
     } catch (_) {}
+
+    // Полностью пересобираем офлайн-кэш Истории продаж и Должников — тем же
+    // способом, что и каталог товаров выше: последовательно обходим все
+    // страницы, чтобы состав и порядок совпадали с онлайн-режимом.
+    await _refreshSalesCache();
+    await _refreshDebtorsCache();
+  }
+
+  Future<void> _refreshSalesCache() async {
+    if (!ConnectivityService.instance.isOnline) return;
+    const pageSize = 200;
+    final all = <Map<String, dynamic>>[];
+    try {
+      int page = 1;
+      int totalPages = 1;
+      do {
+        final uri = Uri.parse(
+          '$baseUrl/api/sales',
+        ).replace(queryParameters: {'page': '$page', 'limit': '$pageSize'});
+        final response = await http
+            .get(uri, headers: await _getHeaders())
+            .timeout(const Duration(seconds: 15));
+        if (response.statusCode != 200) break;
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        all.addAll((body['data'] as List).cast<Map<String, dynamic>>());
+        totalPages = (body['total_pages'] as num?)?.toInt() ?? 1;
+        page++;
+      } while (page <= totalPages && page <= 50);
+
+      if (all.isNotEmpty || page > 1) {
+        await _db.cacheSales(all);
+      }
+    } catch (_) {
+      // Оставляем то, что уже было закэшировано ранее.
+    }
+  }
+
+  Future<void> _refreshDebtorsCache() async {
+    if (!ConnectivityService.instance.isOnline) return;
+    const pageSize = 200;
+    final all = <Map<String, dynamic>>[];
+    try {
+      int page = 1;
+      int totalPages = 1;
+      do {
+        final uri = Uri.parse(
+          '$baseUrl/api/debtors',
+        ).replace(queryParameters: {'page': '$page', 'limit': '$pageSize'});
+        final response = await http
+            .get(uri, headers: await _getHeaders())
+            .timeout(const Duration(seconds: 15));
+        if (response.statusCode != 200) break;
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        all.addAll((body['data'] as List).cast<Map<String, dynamic>>());
+        totalPages = (body['total_pages'] as num?)?.toInt() ?? 1;
+        page++;
+      } while (page <= totalPages && page <= 50);
+
+      if (all.isNotEmpty || page > 1) {
+        await _db.cacheDebtors(all);
+      }
+    } catch (_) {
+      // Оставляем то, что уже было закэшировано ранее.
+    }
   }
 
   /// Добавляет товар. Возвращает null при успехе, иначе — строку с ошибкой.
@@ -431,33 +495,44 @@ class ApiService {
   }
 
   /// Получает страницу истории продаж.
+  /// Онлайн: запрашивает API и точечно освежает офлайн-кэш этой страницей.
+  /// Офлайн (или сетевая ошибка): отдаёт весь кэшированный список одной
+  /// "страницей", как это уже сделано для товаров в [getProducts].
   Future<PaginatedResult<dynamic>> getSalesPage({
     int page = 1,
     int limit = 50,
   }) async {
-    try {
-      final uri = Uri.parse(
-        '$baseUrl/api/sales',
-      ).replace(queryParameters: {'page': '$page', 'limit': '$limit'});
-      final response = await http.get(uri, headers: await _getHeaders());
-      _checkSubscription(response.statusCode);
-      if (response.statusCode == 200) {
-        final body = jsonDecode(response.body) as Map<String, dynamic>;
-        return PaginatedResult(
-          data: body['data'] as List<dynamic>,
-          total: body['total'] as int,
-          page: body['page'] as int,
-          limit: body['limit'] as int,
-          totalPages: body['total_pages'] as int,
-        );
+    if (ConnectivityService.instance.isOnline) {
+      try {
+        final uri = Uri.parse(
+          '$baseUrl/api/sales',
+        ).replace(queryParameters: {'page': '$page', 'limit': '$limit'});
+        final response = await http.get(uri, headers: await _getHeaders());
+        _checkSubscription(response.statusCode);
+        if (response.statusCode == 200) {
+          final body = jsonDecode(response.body) as Map<String, dynamic>;
+          final items = (body['data'] as List).cast<Map<String, dynamic>>();
+          await _db.upsertCachedSales(items);
+          return PaginatedResult(
+            data: items,
+            total: body['total'] as int,
+            page: body['page'] as int,
+            limit: body['limit'] as int,
+            totalPages: body['total_pages'] as int,
+          );
+        }
+      } catch (_) {
+        ConnectivityService.instance.markOffline();
       }
-    } catch (_) {}
+    }
+
+    final cached = await _db.getCachedSales();
     return PaginatedResult(
-      data: [],
-      total: 0,
-      page: page,
-      limit: limit,
-      totalPages: 0,
+      data: cached,
+      total: cached.length,
+      page: 1,
+      limit: cached.length,
+      totalPages: 1,
     );
   }
 
@@ -955,33 +1030,45 @@ class ApiService {
   }
 
   /// Получает страницу должников.
+  /// Онлайн: запрашивает API и точечно освежает офлайн-кэш этой страницей
+  /// (не трогая должников, добавленных офлайн и ещё не синхронизированных).
+  /// Офлайн (или сетевая ошибка): отдаёт кэш целиком, включая должников и
+  /// суммы долга, ещё не отправленные на сервер (см. createDebtor/debtOperation).
   Future<PaginatedResult<dynamic>> getDebtorsPage({
     int page = 1,
     int limit = 50,
   }) async {
-    try {
-      final uri = Uri.parse(
-        '$baseUrl/api/debtors',
-      ).replace(queryParameters: {'page': '$page', 'limit': '$limit'});
-      final response = await http.get(uri, headers: await _getHeaders());
-      _checkSubscription(response.statusCode);
-      if (response.statusCode == 200) {
-        final body = jsonDecode(response.body) as Map<String, dynamic>;
-        return PaginatedResult(
-          data: body['data'] as List<dynamic>,
-          total: body['total'] as int,
-          page: body['page'] as int,
-          limit: body['limit'] as int,
-          totalPages: body['total_pages'] as int,
-        );
+    if (ConnectivityService.instance.isOnline) {
+      try {
+        final uri = Uri.parse(
+          '$baseUrl/api/debtors',
+        ).replace(queryParameters: {'page': '$page', 'limit': '$limit'});
+        final response = await http.get(uri, headers: await _getHeaders());
+        _checkSubscription(response.statusCode);
+        if (response.statusCode == 200) {
+          final body = jsonDecode(response.body) as Map<String, dynamic>;
+          final items = (body['data'] as List).cast<Map<String, dynamic>>();
+          await _db.upsertCachedDebtors(items);
+          return PaginatedResult(
+            data: items,
+            total: body['total'] as int,
+            page: body['page'] as int,
+            limit: body['limit'] as int,
+            totalPages: body['total_pages'] as int,
+          );
+        }
+      } catch (_) {
+        ConnectivityService.instance.markOffline();
       }
-    } catch (_) {}
+    }
+
+    final cached = await _db.getCachedDebtors();
     return PaginatedResult(
-      data: [],
-      total: 0,
-      page: page,
-      limit: limit,
-      totalPages: 0,
+      data: cached,
+      total: cached.length,
+      page: 1,
+      limit: cached.length,
+      totalPages: 1,
     );
   }
 
@@ -991,6 +1078,13 @@ class ApiService {
     return result.data;
   }
 
+  /// Создаёт нового должника.
+  /// Онлайн: обычный запрос к серверу.
+  /// Сетевая ошибка (нет соединения/таймаут): должник ставится в офлайн-
+  /// очередь ([DatabaseHelper.insertOfflineDebtorOp]) и сразу появляется в
+  /// локальном кэше с временным (отрицательным) id, помеченным как
+  /// ожидающий синхронизации — так UI ведёт себя одинаково и офлайн, и
+  /// онлайн (result != null ⇒ "успех", как и раньше).
   Future<Map<String, dynamic>?> createDebtor({
     required String fullName,
     String phone = '',
@@ -998,25 +1092,61 @@ class ApiService {
     String note = '',
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/api/debtors'),
-        headers: await _getHeaders(),
-        body: jsonEncode({
-          'full_name': fullName,
-          'phone': phone,
-          'initial_debt': initialDebt,
-          'note': note,
-        }),
-      );
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/debtors'),
+            headers: await _getHeaders(),
+            body: jsonEncode({
+              'full_name': fullName,
+              'phone': phone,
+              'initial_debt': initialDebt,
+              'note': note,
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
       _checkSubscription(response.statusCode);
-      if (response.statusCode == 201) return jsonDecode(response.body);
+      if (response.statusCode == 201) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        await _db.upsertCachedDebtors([data]);
+        return data;
+      }
+      // Сервер ответил, но отклонил запрос (валидация/дубликат и т.п.) —
+      // реальная ошибка, повторять её офлайн-очередью бессмысленно.
       return null;
     } catch (e) {
-      return null;
+      // Ответа от сервера не было вообще — реальный сетевой сбой.
+      ConnectivityService.instance.markOffline();
     }
+
+    final tempId = -DateTime.now().millisecondsSinceEpoch;
+    final localDebtor = <String, dynamic>{
+      'id': tempId,
+      'company_id': 0,
+      'shop_id': 0,
+      'full_name': fullName,
+      'phone': phone,
+      'total_debt': initialDebt,
+      'updated_at': DateTime.now().toIso8601String(),
+    };
+    await _db.insertLocalDebtor(localDebtor);
+    await _db.insertOfflineDebtorOp('create', {
+      'full_name': fullName,
+      'phone': phone,
+      'initial_debt': initialDebt,
+      'note': note,
+    }, localDebtorId: tempId);
+    return localDebtor;
   }
 
   /// type: 'pay' — внёс деньги, 'take' — добавить долг
+  ///
+  /// Онлайн: обычный запрос к серверу.
+  /// Сетевая ошибка: операция ставится в офлайн-очередь и сразу применяется
+  /// к закэшированной сумме долга (оптимистично), чтобы список должников
+  /// офлайн показывал актуальную сумму без ожидания синхронизации.
+  /// Операции над должником, который сам ещё не синхронизирован (временный
+  /// отрицательный id), в офлайне не принимаются — сервер о таком должнике
+  /// пока не знает, и порядок операций мог бы разъехаться.
   Future<Map<String, dynamic>?> debtOperation(
     int debtorId, {
     required double amount,
@@ -1024,16 +1154,70 @@ class ApiService {
     String note = '',
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/api/debtors/$debtorId/operation'),
-        headers: await _getHeaders(),
-        body: jsonEncode({'amount': amount, 'type': type, 'note': note}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/debtors/$debtorId/operation'),
+            headers: await _getHeaders(),
+            body: jsonEncode({'amount': amount, 'type': type, 'note': note}),
+          )
+          .timeout(const Duration(seconds: 8));
       _checkSubscription(response.statusCode);
-      if (response.statusCode == 200) return jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        await _db.upsertCachedDebtors([data]);
+        return data;
+      }
       return null;
     } catch (e) {
+      ConnectivityService.instance.markOffline();
+    }
+
+    if (debtorId < 0) {
+      // Должник сам ещё не синхронизирован — операцию над ним пока
+      // отложить нельзя, т.к. сервер о нём не знает.
       return null;
+    }
+
+    await _db.applyLocalDebtOperation(debtorId, amount, type);
+    final payload = {
+      'debtor_id': debtorId,
+      'amount': amount,
+      'type': type,
+      'note': note,
+      'created_at': DateTime.now().toIso8601String(),
+    };
+    await _db.insertOfflineDebtorOp(
+      'operation',
+      payload,
+      localDebtorId: debtorId,
+    );
+    _pendingOpsSnapshot.add(payload);
+    return payload;
+  }
+
+  /// Удаляет товар (soft delete на бэкенде — is_active = false).
+  /// Разрешено только владельцу магазина; сервер сам проверяет роль
+  /// (403, если вызвал продавец) — здесь достаточно передать результат.
+  /// Как и другие "владельческие" операции (deleteUser/deleteShop/
+  /// deleteDebtor), в офлайн-очередь не ставится: удаление — редкое
+  /// действие, требующее подтверждения от сервера, а не то, что
+  /// нужно применять оптимистично при отсутствии сети.
+  ///
+  Future<bool> deleteProduct(int id) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/products/$id'),
+        headers: await _getHeaders(),
+      );
+      _checkSubscription(response.statusCode);
+      if (response.statusCode == 200) {
+        await _db.removeCachedProduct(id);
+        DataRefreshService.instance.notifyProductChanged();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -1051,18 +1235,142 @@ class ApiService {
   }
 
   Future<List<dynamic>> getDebtHistory(int debtorId) async {
-    try {
-      final response = await http
-          .get(
-            Uri.parse('$baseUrl/api/debtors/$debtorId/history'),
-            headers: await _getHeaders(),
-          )
-          .timeout(const Duration(seconds: 10));
-      _checkSubscription(response.statusCode);
-      if (response.statusCode == 200) return jsonDecode(response.body);
-      return [];
-    } catch (e) {
-      return [];
+    if (ConnectivityService.instance.isOnline) {
+      try {
+        final response = await http
+            .get(
+              Uri.parse('$baseUrl/api/debtors/$debtorId/history'),
+              headers: await _getHeaders(),
+            )
+            .timeout(const Duration(seconds: 10));
+        _checkSubscription(response.statusCode);
+        if (response.statusCode == 200) {
+          final items = (jsonDecode(response.body) as List)
+              .cast<Map<String, dynamic>>();
+          await _db.cacheDebtHistory(debtorId, items);
+          return [...items, ..._pendingHistoryEntries(debtorId)];
+        }
+      } catch (_) {
+        ConnectivityService.instance.markOffline();
+      }
     }
+
+    final cached = await _db.getCachedDebtHistory(debtorId);
+    return [..._pendingHistoryEntries(debtorId), ...cached];
+  }
+
+  /// Синтетические записи истории для ещё не отправленных на сервер
+  /// операций с этим должником — чтобы пользователь сразу видел их в
+  /// истории (с пометкой "офлайн"), не дожидаясь синхронизации.
+  /// Заполняется синхронно из in-memory снимка очереди — см. [_pendingOpsSnapshot].
+  List<Map<String, dynamic>> _pendingHistoryEntries(int debtorId) {
+    return _pendingOpsSnapshot
+        .where((op) => op['debtor_id'] == debtorId)
+        .map(
+          (op) => {
+            'id': -1,
+            'debtor_id': debtorId,
+            'amount': op['amount'],
+            'type': op['type'],
+            'note': '${op['note'] ?? ''} (офлайн, дар навбати ирсол)'.trim(),
+            'created_at': op['created_at'],
+          },
+        )
+        .toList();
+  }
+
+  /// Снимок ожидающих отправки операций по должникам, обновляется при
+  /// каждом успешном/неудачном вызове createDebtor/debtOperation, чтобы
+  /// [getDebtHistory] мог синхронно (без похода в БД) показать их в
+  /// истории. Живёт только в памяти текущей сессии приложения.
+  final List<Map<String, dynamic>> _pendingOpsSnapshot = [];
+
+  /// Отправляет на сервер все накопленные офлайн операции с должниками
+  /// (создание должника, оплата/добавление долга). Вызывается из
+  /// [SyncService] при восстановлении связи — аналог _syncOfflineSales
+  /// для чеков. Порядок отправки — по времени постановки в очередь, чтобы
+  /// операция над только что созданным офлайн должником ушла уже после
+  /// того, как сам должник появился на сервере.
+  Future<void> syncOfflineDebtorOps() async {
+    final ops = await _db.getUnsyncedDebtorOps();
+    if (ops.isEmpty) return;
+
+    for (final row in ops) {
+      if (!ConnectivityService.instance.isOnline) break;
+
+      final id = row['id'] as int;
+      final opType = row['op_type'] as String;
+      final payload =
+          jsonDecode(row['payload'] as String) as Map<String, dynamic>;
+
+      try {
+        if (opType == 'create') {
+          final response = await http
+              .post(
+                Uri.parse('$baseUrl/api/debtors'),
+                headers: await _getHeaders(),
+                body: jsonEncode(payload),
+              )
+              .timeout(const Duration(seconds: 15));
+          if (response.statusCode == 201) {
+            final data = jsonDecode(response.body) as Map<String, dynamic>;
+            final tempId = row['local_debtor_id'] as int?;
+            if (tempId != null) await _db.removeLocalDebtor(tempId);
+            await _db.upsertCachedDebtors([data]);
+            await _db.markDebtorOpSynced(id);
+          } else {
+            // Сервер ответил и отклонил (например, дубликат имени/телефона,
+            // появившийся, пока мы были офлайн) — не ретраим бесконечно.
+            String message = 'Сервер рад кард (${response.statusCode})';
+            try {
+              final body = jsonDecode(response.body);
+              if (body is Map && body['error'] != null) {
+                message = body['error'].toString();
+              }
+            } catch (_) {}
+            await _db.markDebtorOpFailed(id, message);
+          }
+        } else if (opType == 'operation') {
+          final debtorId = payload['debtor_id'] as int;
+          final response = await http
+              .post(
+                Uri.parse('$baseUrl/api/debtors/$debtorId/operation'),
+                headers: await _getHeaders(),
+                body: jsonEncode({
+                  'amount': payload['amount'],
+                  'type': payload['type'],
+                  'note': payload['note'] ?? '',
+                }),
+              )
+              .timeout(const Duration(seconds: 15));
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body) as Map<String, dynamic>;
+            await _db.upsertCachedDebtors([data]);
+            await _db.markDebtorOpSynced(id);
+            _pendingOpsSnapshot.removeWhere(
+              (op) =>
+                  op['debtor_id'] == payload['debtor_id'] &&
+                  op['created_at'] == payload['created_at'],
+            );
+          } else {
+            String message = 'Сервер рад кард (${response.statusCode})';
+            try {
+              final body = jsonDecode(response.body);
+              if (body is Map && body['error'] != null) {
+                message = body['error'].toString();
+              }
+            } catch (_) {}
+            await _db.markDebtorOpFailed(id, message);
+          }
+        }
+      } catch (_) {
+        // Сетевая ошибка посреди отправки очереди — оставляем 'pending',
+        // попробуем снова при следующем восстановлении связи.
+        ConnectivityService.instance.markOffline();
+        break;
+      }
+    }
+
+    await _db.cleanupSyncedDebtorOps();
   }
 }
