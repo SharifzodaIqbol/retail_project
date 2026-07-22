@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:retail_app/services/data_refresh_service.dart';
 import '../services/api_service.dart';
 
 enum _DatePreset { all, today, yesterday, week, month }
@@ -28,9 +29,15 @@ class HistoryScreen extends StatefulWidget {
   State<HistoryScreen> createState() => _HistoryScreenState();
 }
 
-class _HistoryScreenState extends State<HistoryScreen> {
+class _HistoryScreenState extends State<HistoryScreen>
+    with AutoRefreshMixin<HistoryScreen> {
   final ApiService _apiService = ApiService();
 
+  @override
+  Stream<void> get refreshStream => DataRefreshService.instance.onSaleChanged;
+
+  @override
+  Future<void> loadData() => _loadSales(reset: true);
   // Какие секции-дни сейчас развёрнуты. По умолчанию открыт только сегодняшний день.
   final Set<String> _expandedDays = {};
   bool _initializedExpansion = false;
@@ -53,7 +60,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSales(reset: true);
     _scrollCtrl.addListener(_onScroll);
   }
 
@@ -65,7 +71,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
     super.dispose();
   }
 
+  int _loadGeneration = 0;
   Future<void> _loadSales({bool reset = false}) async {
+    final myGeneration = reset ? ++_loadGeneration : _loadGeneration;
     if (reset) {
       setState(() {
         _loading = true;
@@ -79,8 +87,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
 
     final result = await _apiService.getSalesPage(page: _page, limit: _limit);
-
     if (!mounted) return;
+    if (myGeneration != _loadGeneration) return;
     setState(() {
       _allSales.addAll(result.data);
       _totalPages = result.totalPages;

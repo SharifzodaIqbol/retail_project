@@ -145,7 +145,16 @@ func (r *ProductRepository) GetLowStockProducts(ctx context.Context, companyID, 
 }
 
 // UpdateInventory — addStock теперь float64, чтобы можно было добавлять
-// дробные остатки для товаров с unit = "kg" (например, +2.5 кг).
+// дробные остатки для товаров с unit = "kg" (например, +2.5 кг), а с
+// добавлением возможности продавцу уменьшать остаток — addStock может
+// быть и отрицательным.
+//
+// Условие "stock + $1 >= 0" в WHERE не даёт остатку уйти в минус при
+// гонке двух одновременных операций над одним товаром (клиентская проверка
+// делается по локально закэшированному stock и могла устареть). Если из-за
+// этого условия ни одна строка не была затронута, но товар при этом
+// существует — значит запрошенное уменьшение больше текущего остатка,
+// это отличаем от ErrNotFound отдельной ошибкой ErrInsufficientStock.
 func (r *ProductRepository) UpdateInventory(ctx context.Context, id int, companyID, shopID int, addStock float64, sellPrice, buyPrice float64) error {
 	query := `
 		UPDATE products 
@@ -153,16 +162,27 @@ func (r *ProductRepository) UpdateInventory(ctx context.Context, id int, company
 			stock = stock + $1, 
 			sell_price = $2, 
 			buy_price = $3 
-		WHERE id = $4 AND company_id = $5 AND shop_id = $6`
+		WHERE id = $4 AND company_id = $5 AND shop_id = $6 AND stock + $1 >= 0`
 
 	tag, err := r.db.Exec(ctx, query, addStock, sellPrice, buyPrice, id, companyID, shopID)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+
+	// Ничего не обновилось — выясняем, товара нет вообще, или он есть,
+	// но условие по остатку не выполнилось (недостаточно товара).
+	var exists bool
+	checkErr := r.db.QueryRow(ctx,
+		`SELECT true FROM products WHERE id = $1 AND company_id = $2 AND shop_id = $3`,
+		id, companyID, shopID,
+	).Scan(&exists)
+	if checkErr != nil {
 		return ErrNotFound
 	}
-	return nil
+	return ErrInsufficientStock
 }
 
 func (r *ProductRepository) SoftDelete(ctx context.Context, id int, companyID, shopID int) error {
