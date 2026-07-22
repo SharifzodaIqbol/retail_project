@@ -320,80 +320,84 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
           title: Text(
             isPay ? '💳 Пардохтро ворид кунед' : '➕ Илова кардани қарз',
           ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                debtor['full_name'],
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 16,
-                ),
-              ),
-              Text(
-                'Қарзи ҳозира: ${totalDebt.toStringAsFixed(2)} сомонӣ',
-                style: TextStyle(
-                  color: totalDebt > 0 ? Colors.red.shade600 : Colors.green,
-                  fontSize: 13,
-                ),
-              ),
-              if (isPay && totalDebt <= 0) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.green.shade50,
-                    borderRadius: BorderRadius.circular(8),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  debtor['full_name'],
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 16,
                   ),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.check_circle, color: Colors.green, size: 16),
-                      SizedBox(width: 6),
-                      Text(
-                        'Қарз пурра пардохта шудааст',
-                        style: TextStyle(color: Colors.green, fontSize: 12),
-                      ),
-                    ],
+                ),
+                Text(
+                  'Қарзи ҳозира: ${totalDebt.toStringAsFixed(2)} сомонӣ',
+                  style: TextStyle(
+                    color: totalDebt > 0 ? Colors.red.shade600 : Colors.green,
+                    fontSize: 13,
+                  ),
+                ),
+                if (isPay && totalDebt <= 0) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.check_circle, color: Colors.green, size: 16),
+                        SizedBox(width: 6),
+                        Text(
+                          'Қарз пурра пардохта шудааст',
+                          style: TextStyle(color: Colors.green, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                TextField(
+                  controller: amountCtrl,
+                  autofocus: true,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+                  ],
+                  onChanged: (_) => setDialogState(() => amountError = null),
+                  decoration: InputDecoration(
+                    labelText: 'Маблағ (сомонӣ) *',
+                    border: const OutlineInputBorder(),
+                    errorText: amountError,
+                    suffix: isPay && totalDebt > 0
+                        ? TextButton(
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                            ),
+                            onPressed: () {
+                              amountCtrl.text = totalDebt.toStringAsFixed(2);
+                              setDialogState(() => amountError = null);
+                            },
+                            child: const Text('Ҳамааш'),
+                          )
+                        : null,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: noteCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Фаҳмондадиҳи (ихтиёрӣ)',
+                    border: OutlineInputBorder(),
                   ),
                 ),
               ],
-              const SizedBox(height: 16),
-              TextField(
-                controller: amountCtrl,
-                autofocus: true,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
-                ],
-                onChanged: (_) => setDialogState(() => amountError = null),
-                decoration: InputDecoration(
-                  labelText: 'Маблағ (сомонӣ) *',
-                  border: const OutlineInputBorder(),
-                  errorText: amountError,
-                  suffix: isPay && totalDebt > 0
-                      ? TextButton(
-                          style: TextButton.styleFrom(padding: EdgeInsets.zero),
-                          onPressed: () {
-                            amountCtrl.text = totalDebt.toStringAsFixed(2);
-                            setDialogState(() => amountError = null);
-                          },
-                          child: const Text('Ҳамааш'),
-                        )
-                      : null,
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: noteCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Фаҳмондадиҳи (ихтиёрӣ)',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
+            ),
           ),
           actions: [
             TextButton(

@@ -33,6 +33,14 @@ class _InventoryScreenState extends State<InventoryScreen>
   int _totalPages = 1;
   static const int _limit = 50;
 
+  // Токен поколения загрузки. Каждый reset=true увеличивает его; ответ
+  // от уже устаревшего вызова (например, обновление списка запустилось
+  // одновременно из двух мест — явно после сохранения и через поток
+  // DataRefreshService.onProductChanged, на который тоже подписан этот
+  // экран через AutoRefreshMixin) игнорируется, чтобы товары не
+  // задваивались в списке.
+  int _loadGeneration = 0;
+
   String _role = '';
   String _searchQuery = '';
 
@@ -66,7 +74,9 @@ class _InventoryScreenState extends State<InventoryScreen>
   // Загружает страницу товаров.
   // reset=true — начать с первой страницы (pull-to-refresh или первый запуск).
   Future<void> _loadProducts({bool reset = false}) async {
+    late final int myGeneration;
     if (reset) {
+      myGeneration = ++_loadGeneration;
       setState(() {
         _loading = true;
         _page = 1;
@@ -74,12 +84,18 @@ class _InventoryScreenState extends State<InventoryScreen>
       });
     } else {
       if (_loadingMore || _page >= _totalPages) return;
+      myGeneration = _loadGeneration;
       setState(() => _loadingMore = true);
     }
 
     final result = await _api.getProducts(page: _page, limit: _limit);
 
     if (!mounted) return;
+    // Пока шёл запрос, успел стартовать более новый reset (или экран
+    // ушёл в офлайн/переоткрылся) — этот ответ уже устарел, применять
+    // его нельзя, иначе список продублируется или перепутается порядок.
+    if (myGeneration != _loadGeneration) return;
+
     setState(() {
       _products.addAll(result.data);
       _totalPages = result.totalPages;
@@ -187,7 +203,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                     border: const OutlineInputBorder(),
                     errorText: _amountError,
                     helperText:
-                        'Барои илова "+10", барои кам кардан "-5" нависед'
+                        'Илова "+", кам кардан "-"'
                         '${product.unit == 'kg' ? ' (адади касрӣ иҷозат аст, мас: -2.5)' : ''}',
                   ),
                 ),
@@ -334,7 +350,13 @@ class _InventoryScreenState extends State<InventoryScreen>
 
                             if (ok) {
                               Navigator.pop(context);
-                              _loadProducts(reset: true);
+                              // Не вызываем _loadProducts(reset: true) здесь —
+                              // ApiService.updateInventory уже дёргает
+                              // DataRefreshService.notifyProductChanged(),
+                              // на который этот экран подписан через
+                              // AutoRefreshMixin. Двойной вызов приводил к
+                              // гонке двух параллельных загрузок и
+                              // задвоению товаров в списке.
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(
