@@ -16,12 +16,12 @@ type Handler struct {
 	productRepo     *repository.ProductRepository
 	productUnitRepo *repository.ProductUnitRepository
 	saleRepo        *repository.SaleRepository
-	userRepo    *repository.UserRepository
-	companyRepo *repository.CompanyRepository
-	shopRepo    *repository.ShopRepository
-	debtorRepo  *repository.DebtorRepository
-	tgBot       *telegram.Bot
-	dbPool      *pgxpool.Pool
+	userRepo        *repository.UserRepository
+	companyRepo     *repository.CompanyRepository
+	shopRepo        *repository.ShopRepository
+	debtorRepo      *repository.DebtorRepository
+	tgBot           *telegram.Bot
+	dbPool          *pgxpool.Pool
 
 	// Rate limiting на вход (см. internal/ratelimit) — защита от подбора
 	// пароля владельца и особенно 4-значного PIN продавца.
@@ -45,13 +45,13 @@ func NewHandler(
 	return &Handler{
 		productRepo:     productRepo,
 		productUnitRepo: productUnitRepo,
-		saleRepo:    saleRepo,
-		userRepo:    userRepo,
-		companyRepo: companyRepo,
-		shopRepo:    shopRepo,
-		debtorRepo:  debtorRepo,
-		tgBot:       tgBot,
-		dbPool:      dbPool,
+		saleRepo:        saleRepo,
+		userRepo:        userRepo,
+		companyRepo:     companyRepo,
+		shopRepo:        shopRepo,
+		debtorRepo:      debtorRepo,
+		tgBot:           tgBot,
+		dbPool:          dbPool,
 
 		// 5 неудачных попыток за 15 минут -> блок на 15 минут для конкретной пары IP+username/PIN.
 		loginLimiter: ratelimit.New(5, 15*time.Minute, 15*time.Minute),
@@ -95,7 +95,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	{
 		// Товары
 		api.GET("/products/search", h.searchProducts)
-		api.GET("/products/:barcode", h.getProductByBarcode)
+		api.GET("/products/:id", h.getProductByBarcode)
 		api.GET("/products", h.getAllProducts)
 		api.POST("/products", h.createProduct)
 		api.POST("/products/import", h.importProducts)
