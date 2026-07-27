@@ -95,7 +95,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	{
 		// Товары
 		api.GET("/products/search", h.searchProducts)
-		api.GET("/products/:id", h.getProductByBarcode)
+		api.GET("/products/barcode/:barcode", h.getProductByBarcode)
 		api.GET("/products", h.getAllProducts)
 		api.POST("/products", h.createProduct)
 		api.POST("/products/import", h.importProducts)
