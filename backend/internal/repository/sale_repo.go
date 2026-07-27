@@ -38,21 +38,46 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID, shopID int,
 	}
 
 	for _, item := range items {
+		// Пересчёт в базовые единицы делает СЕРВЕР, а не клиент: смотрим
+		// conversion_factor выбранной единицы продажи (unit_id) внутри той же
+		// транзакции и по той же company_id, которой авторизован кассир — нельзя
+		// списать склад по unit_id, подсунутому от чужой компании, и нельзя
+		// доверять quantity_base, которое мог прислать клиент напрямую.
+		var conversionFactor float64
+		var unitProductID int
+		err = tx.QueryRow(ctx, `
+			SELECT product_id, conversion_factor
+			FROM product_units
+			WHERE id = $1 AND company_id = $2 AND is_active = true`,
+			item.UnitID, companyID,
+		).Scan(&unitProductID, &conversionFactor)
+		if err != nil {
+			return 0, fmt.Errorf("единица продажи не найдена: %d", item.UnitID)
+		}
+		if unitProductID != item.ProductID {
+			return 0, fmt.Errorf("единица продажи %d не принадлежит товару %d", item.UnitID, item.ProductID)
+		}
+
+		quantityBase := item.QuantityDisplay * conversionFactor
+
 		_, err = tx.Exec(ctx, `INSERT INTO sale_items 
-						   (sale_id, company_id, product_id, quantity, price_at_sale) 
-						   VALUES ($1, $2, $3, $4, $5)`,
-			saleID, companyID, item.ProductID, item.Quantity, item.PriceAtSale)
+						   (sale_id, company_id, product_id, unit_id, quantity_base, quantity_display, price_at_sale) 
+						   VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			saleID, companyID, item.ProductID, item.UnitID, quantityBase, item.QuantityDisplay, item.PriceAtSale)
 		if err != nil {
 			return 0, err
 		}
 
 		var p domain.Product
-		// company_id/shop_id — не даём списать склад товара, принадлежащего другому магазину
+		// company_id/shop_id — не даём списать склад товара, принадлежащего другому магазину.
+		// Списание идёт по quantityBase (базовые единицы), НЕ по числу, которое
+		// ввёл кассир (quantity_display) — так продажа упаковками не занижает
+		// списание склада.
 		err = tx.QueryRow(ctx, `UPDATE products 
 								SET stock = stock - $1 
 								WHERE id = $2 AND company_id = $3 AND shop_id = $4 AND stock >= $1 
 								RETURNING name, stock`,
-			item.Quantity, item.ProductID, companyID, shopID).Scan(&p.Name, &p.Stock)
+			quantityBase, item.ProductID, companyID, shopID).Scan(&p.Name, &p.Stock)
 
 		if err != nil {
 			return 0, fmt.Errorf("Норасоии махсулот: %s", p.Name)
@@ -78,7 +103,7 @@ func (r *SaleRepository) GetTodayTotal(ctx context.Context, companyID int) (doma
 
 func (r *SaleRepository) GetTopProducts(ctx context.Context, companyID int, limit int) (string, error) {
 	query := `
-        SELECT p.name, SUM(si.quantity) as total_qty, p.unit
+        SELECT p.name, SUM(si.quantity_base) as total_qty, p.unit
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
@@ -183,7 +208,7 @@ func (r *SaleRepository) CancelSale(ctx context.Context, companyID, shopID int, 
 
 	updateStockQuery := `
         UPDATE products 
-        SET stock = stock + si.quantity 
+        SET stock = stock + si.quantity_base 
         FROM sale_items si 
         WHERE products.id = si.product_id AND si.sale_id = $1`
 
@@ -211,7 +236,7 @@ func (r *SaleRepository) GetDailyNetProfit(ctx context.Context, companyID int) (
 	var profit float64
 	query := `
         SELECT 
-            COALESCE(SUM(si.quantity * (si.price_at_sale - p.buy_price)), 0)
+            COALESCE(SUM(si.quantity_base * (si.price_at_sale - p.buy_price)), 0)
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
@@ -230,7 +255,7 @@ func (r *SaleRepository) GetPeriodSummary(ctx context.Context, companyID, shopID
 	query := `
 		SELECT 
 			COALESCE(SUM(s.total_amount), 0) as revenue,
-			COALESCE(SUM(si.quantity * (si.price_at_sale - p.buy_price)), 0) as profit,
+			COALESCE(SUM(si.quantity_base * (si.price_at_sale - p.buy_price)), 0) as profit,
 			COUNT(DISTINCT s.id) as sales_count,
 			COALESCE(AVG(s.total_amount), 0) as avg_check
 		FROM sales s
@@ -250,9 +275,9 @@ func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, companyID, 
         SELECT 
             p.id,
             p.name, 
-            SUM(si.quantity) as total_qty,
-            SUM(si.quantity * si.price_at_sale) as total_revenue,
-            SUM(si.quantity * (si.price_at_sale - p.buy_price)) as total_profit
+            SUM(si.quantity_base) as total_qty,
+            SUM(si.quantity_base * si.price_at_sale) as total_revenue,
+            SUM(si.quantity_base * (si.price_at_sale - p.buy_price)) as total_profit
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
@@ -298,7 +323,7 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, companyID, shopID in
         LEFT JOIN (
             SELECT 
                 si.sale_id,
-                SUM(si.quantity * (si.price_at_sale - p.buy_price)) as profit_per_sale
+                SUM(si.quantity_base * (si.price_at_sale - p.buy_price)) as profit_per_sale
             FROM sale_items si
             JOIN products p ON si.product_id = p.id
             GROUP BY si.sale_id

@@ -15,11 +15,42 @@ func NewProductRepository(db *pgxpool.Pool) *ProductRepository {
 	return &ProductRepository{db: db}
 }
 
+// Create — создаёт товар и, в той же транзакции, его базовую единицу
+// продажи ("шт"/"кг", conversion_factor = 1, is_base = true). Базовая
+// единица должна существовать всегда — на неё опирается продажа "по
+// умолчанию", когда для товара ещё не завели дополнительные единицы
+// (упаковку, блок...).
 func (r *ProductRepository) Create(ctx context.Context, p domain.Product) error {
-	query := `INSERT INTO products 
-	(company_id, shop_id, name, barcode, buy_price, sell_price, stock, unit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-	_, err := r.db.Exec(ctx, query, p.CompanyID, p.ShopID, p.Name, p.Barcode, p.BuyPrice, p.SellPrice, p.Stock, p.Unit)
-	return err
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var productID int
+	err = tx.QueryRow(ctx, `INSERT INTO products
+		(company_id, shop_id, name, barcode, buy_price, sell_price, stock, unit)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+		p.CompanyID, p.ShopID, p.Name, p.Barcode, p.BuyPrice, p.SellPrice, p.Stock, p.Unit,
+	).Scan(&productID)
+	if err != nil {
+		return err
+	}
+
+	baseLabel := "шт"
+	if p.Unit == domain.UnitKg {
+		baseLabel = "кг"
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO product_units
+		(company_id, product_id, label, conversion_factor, price, barcode, is_base, is_active)
+		VALUES ($1, $2, $3, 1, $4, $5, true, true)`,
+		p.CompanyID, productID, baseLabel, p.SellPrice, p.Barcode,
+	)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 // GetAll — возвращает страницу товаров текущего магазина с пагинацией.
@@ -63,6 +94,27 @@ func (r *ProductRepository) GetAll(ctx context.Context, companyID, shopID int, l
 func (r *ProductRepository) GetByBarcode(ctx context.Context, companyID, shopID int, barcode string) (*domain.Product, error) {
 	var p domain.Product
 	query := `SELECT id, name, barcode, buy_price, sell_price, stock, unit FROM products WHERE barcode = $1 AND company_id = $2 AND shop_id = $3 AND is_active = true`
+
+	err := r.db.QueryRow(ctx, query, barcode, companyID, shopID).Scan(
+		&p.ID, &p.Name, &p.Barcode, &p.BuyPrice, &p.SellPrice, &p.Stock, &p.Unit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// GetByUnitBarcode — находит товар по штрихкоду, принадлежащему конкретной
+// единице продажи (product_units.barcode), а не самому товару. Нужен для
+// сканера на кассе: кассир сканирует штрихкод упаковки, а не товара в целом.
+func (r *ProductRepository) GetByUnitBarcode(ctx context.Context, companyID, shopID int, barcode string) (*domain.Product, error) {
+	var p domain.Product
+	query := `
+		SELECT p.id, p.name, p.barcode, p.buy_price, p.sell_price, p.stock, p.unit
+		FROM products p
+		JOIN product_units pu ON pu.product_id = p.id
+		WHERE pu.barcode = $1 AND pu.company_id = $2 AND pu.is_active = true
+		  AND p.company_id = $2 AND p.shop_id = $3 AND p.is_active = true`
 
 	err := r.db.QueryRow(ctx, query, barcode, companyID, shopID).Scan(
 		&p.ID, &p.Name, &p.Barcode, &p.BuyPrice, &p.SellPrice, &p.Stock, &p.Unit,
@@ -207,9 +259,19 @@ func (r *ProductRepository) GetNameByID(ctx context.Context, id int, companyID, 
 }
 
 // UpsertFromImport — создаёт товар или, если в этом магазине уже есть товар
-// с таким баркодом, обновляет его (название/цены/остаток/единицу).
+// с таким баркодом, обновляет его (название/цены/остаток/единицу), а также
+// синхронизирует его базовую единицу продажи и (опционально) создаёт
+// дополнительные единицы продажи, описанные в этой же строке Excel
+// (см. ExtraUnits — колонки за пределами старого фиксированного формата).
 // Возвращает true, если была операция INSERT (новый товар), и false, если был UPDATE.
-func (r *ProductRepository) UpsertFromImport(ctx context.Context, p domain.Product) (created bool, err error) {
+func (r *ProductRepository) UpsertFromImport(ctx context.Context, p domain.Product, extraUnits []domain.CreateProductUnitRequest) (created bool, err error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	var productID int
 	query := `
 		INSERT INTO products (company_id, shop_id, name, barcode, buy_price, sell_price, stock, unit, is_active)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
@@ -220,10 +282,54 @@ func (r *ProductRepository) UpsertFromImport(ctx context.Context, p domain.Produ
 			stock      = EXCLUDED.stock,
 			unit       = EXCLUDED.unit,
 			is_active  = true
-		RETURNING (xmax = 0) AS inserted`
+		RETURNING id, (xmax = 0) AS inserted`
 
-	err = r.db.QueryRow(ctx, query,
+	err = tx.QueryRow(ctx, query,
 		p.CompanyID, p.ShopID, p.Name, p.Barcode, p.BuyPrice, p.SellPrice, p.Stock, p.Unit,
-	).Scan(&created)
-	return created, err
+	).Scan(&productID, &created)
+	if err != nil {
+		return false, err
+	}
+
+	baseLabel := "шт"
+	if p.Unit == domain.UnitKg {
+		baseLabel = "кг"
+	}
+	// upsert базовой единицы: она либо ещё не существует (новый товар —
+	// INSERT), либо уже есть и её нужно обновить под актуальные
+	// цену/штрихкод из этого же файла импорта (UPDATE по product_id+is_base).
+	_, err = tx.Exec(ctx, `
+		INSERT INTO product_units (company_id, product_id, label, conversion_factor, price, barcode, is_base, is_active)
+		VALUES ($1, $2, $3, 1, $4, $5, true, true)
+		ON CONFLICT (product_id) WHERE is_base = true DO UPDATE SET
+			label   = EXCLUDED.label,
+			price   = EXCLUDED.price,
+			barcode = EXCLUDED.barcode`,
+		p.CompanyID, productID, baseLabel, p.SellPrice, p.Barcode,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	// Дополнительные единицы продажи из этой же строки (упаковка/блок/...).
+	// Импорт не пытается угадать conflict-семантику для них по штрихкоду —
+	// каждый повторный импорт того же файла просто добавит их заново было
+	// бы неверно, поэтому матчим по (product_id, label): если единица с
+	// таким названием у товара уже есть — обновляем, иначе создаём.
+	for _, u := range extraUnits {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO product_units (company_id, product_id, label, conversion_factor, price, barcode, is_base, is_active)
+			VALUES ($1, $2, $3, $4, $5, $6, false, true)
+			ON CONFLICT (product_id, label) WHERE NOT is_base DO UPDATE SET
+				conversion_factor = EXCLUDED.conversion_factor,
+				price             = EXCLUDED.price,
+				barcode           = EXCLUDED.barcode`,
+			p.CompanyID, productID, u.Label, u.ConversionFactor, u.Price, u.Barcode,
+		)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	return created, tx.Commit(ctx)
 }

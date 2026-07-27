@@ -71,10 +71,72 @@ func parseImportFloat(raw string) (float64, error) {
 	return strconv.ParseFloat(v, 64)
 }
 
+// parseExtraUnitColumns — читает ДОПОЛНИТЕЛЬНЫЕ единицы продажи товара из
+// колонок, идущих за старым фиксированным форматом (индексы 0..5: название,
+// штрихкод, цена закупки, цена продажи, остаток, единица). Это сделано
+// строго добавлением новых колонок в конец строки, а не переработкой
+// старого формата — старые файлы (без этих колонок) читаются как раньше и
+// продолжают создавать только базовую единицу "шт"/"кг".
+//
+// Формат: каждая доп. единица продажи — это группа из 4 колонок подряд,
+// начиная с индекса 6:
+//   [6] label              — например "упаковка"
+//   [7] conversion_factor  — сколько базовых единиц (шт) в ней, например 20
+//   [8] price              — цена именно за эту единицу продажи
+//   [9] barcode            — необязательно, может быть пустым
+// Далее группы по 4 колонки могут повторяться (10-13, 14-17...) для
+// описания ещё одной единицы продажи того же товара в этой же строке.
+func parseExtraUnitColumns(row []string) ([]domain.CreateProductUnitRequest, error) {
+	var units []domain.CreateProductUnitRequest
+	const groupStart = 6
+	const groupSize = 4
+
+	for start := groupStart; start < len(row); start += groupSize {
+		get := func(offset int) string {
+			idx := start + offset
+			if idx < len(row) {
+				return row[idx]
+			}
+			return ""
+		}
+		label := strings.TrimSpace(get(0))
+		if label == "" {
+			// Пустая группа колонок — просто нет ещё одной единицы продажи
+			// в этой строке, это нормально, а не ошибка.
+			continue
+		}
+		factor, err := parseImportFloat(get(1))
+		if err != nil || factor <= 0 {
+			return nil, fmt.Errorf("единица продажи %q: неверный коэффициент пересчёта %q", label, get(1))
+		}
+		price, err := parseImportFloat(get(2))
+		if err != nil {
+			return nil, fmt.Errorf("единица продажи %q: неверная цена %q", label, get(2))
+		}
+		var barcode *string
+		if b := strings.TrimSpace(get(3)); b != "" {
+			barcode = &b
+		}
+		units = append(units, domain.CreateProductUnitRequest{
+			Label:            label,
+			ConversionFactor: factor,
+			Price:            price,
+			Barcode:          barcode,
+		})
+	}
+	return units, nil
+}
+
 // importProducts — массовая загрузка товаров из Excel-файла (.xlsx).
-// Ожидаемые колонки (фиксированный порядок, первая строка — заголовок и
+// Обязательные колонки (фиксированный порядок, первая строка — заголовок и
 // пропускается): название | штрихкод | цена закупки | цена продажи | остаток | единица.
-// Товар с уже существующим в компании штрихкодом обновляется, иначе создаётся новый.
+// Это ровно старый формат — обратная совместимость полная, старые файлы
+// продолжают работать без изменений.
+//
+// Дополнительно (опционально), начиная с колонки 6, можно описать другие
+// единицы продажи того же товара группами по 4 колонки — см.
+// parseExtraUnitColumns. Товар с уже существующим в компании штрихкодом
+// обновляется, иначе создаётся новый.
 func (h *Handler) importProducts(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 	shopID := c.MustGet("shop_id").(int)
@@ -185,7 +247,13 @@ func (h *Handler) importProducts(c *gin.Context) {
 			Unit:      unit,
 		}
 
-		created, err := h.productRepo.UpsertFromImport(ctx, p)
+		extraUnits, err := parseExtraUnitColumns(row)
+		if err != nil {
+			result.Errors = append(result.Errors, domain.ProductImportError{Row: rowNum, Message: err.Error()})
+			continue
+		}
+
+		created, err := h.productRepo.UpsertFromImport(ctx, p, extraUnits)
 		if err != nil {
 			logErr(c, err, "Импорт товаров: ошибка сохранения строки", "row", rowNum, "barcode", barcode)
 			result.Errors = append(result.Errors, domain.ProductImportError{Row: rowNum, Message: "Ошибка сохранения товара: " + err.Error()})
@@ -206,12 +274,21 @@ func (h *Handler) getProductByBarcode(c *gin.Context) {
 	shopID := c.MustGet("shop_id").(int)
 	barcode := c.Param("barcode")
 
+	// Штрихкод может принадлежать как самому товару (старое поведение,
+	// сохранено для обратной совместимости), так и конкретной единице
+	// продажи (product_units.barcode) — например, штрихкод на упаковке.
+	// Сначала пробуем товар напрямую, затем — единицу продажи.
 	p, err := h.productRepo.GetByBarcode(context.Background(), companyID, shopID, barcode)
 	if err != nil {
-		logWarn(c, "Товар по штрихкоду не найден", "company_id", companyID, "barcode", barcode, "error", err.Error())
-		c.JSON(http.StatusNotFound, gin.H{"error": "Товар не найден"})
-		return
+		p, err = h.productRepo.GetByUnitBarcode(context.Background(), companyID, shopID, barcode)
+		if err != nil {
+			logWarn(c, "Товар по штрихкоду не найден", "company_id", companyID, "barcode", barcode, "error", err.Error())
+			c.JSON(http.StatusNotFound, gin.H{"error": "Товар не найден"})
+			return
+		}
 	}
+
+	h.attachUnits(c, companyID, []domain.Product{*p})
 	c.JSON(http.StatusOK, p)
 }
 
@@ -230,7 +307,34 @@ func (h *Handler) searchProducts(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка поиска"})
 		return
 	}
+
+	// Экран быстрого поиска кассира должен сразу показать карточки всех
+	// единиц продажи (шт/упаковка/блок) с ценой и штрихкодом каждой — без
+	// арифметики в уме у кассира и без отдельного round-trip на каждый товар.
+	h.attachUnits(c, companyID, products)
+
 	c.JSON(http.StatusOK, products)
+}
+
+// attachUnits — пакетно подгружает units для списка товаров и проставляет
+// их в p.Units. Ошибка подгрузки не должна ронять весь ответ поиска —
+// логируем и отдаём товары без units, чем ломаем экран кассира целиком.
+func (h *Handler) attachUnits(c *gin.Context, companyID int, products []domain.Product) {
+	if len(products) == 0 {
+		return
+	}
+	ids := make([]int, len(products))
+	for i, p := range products {
+		ids[i] = p.ID
+	}
+	unitsByProduct, err := h.productUnitRepo.GetForProducts(context.Background(), companyID, ids)
+	if err != nil {
+		logErr(c, err, "Ошибка подгрузки единиц продажи для списка товаров", "company_id", companyID)
+		return
+	}
+	for i := range products {
+		products[i].Units = unitsByProduct[products[i].ID]
+	}
 }
 
 // getAllProducts — GET /api/products?page=1&limit=50

@@ -54,6 +54,12 @@ type Product struct {
 	Stock     float64 `json:"stock"`
 	Unit      string  `json:"unit"`
 	IsActive  bool    `json:"is_active"`
+	// Units — единицы продажи товара (шт/упаковка/блок...). Заполняется
+	// отдельным запросом (см. ProductRepository.GetUnitsForProducts) там,
+	// где это нужно клиенту: карточка товара, поиск по имени, штрихкод.
+	// omitempty, чтобы не раздувать легковесные списки (GetAll), где
+	// единицы не нужны.
+	Units []ProductUnit `json:"units,omitempty"`
 }
 
 // ProductImportResult — отчёт об импорте товаров из Excel.
@@ -68,11 +74,28 @@ type ProductImportError struct {
 	Message string `json:"message"`
 }
 
+// SaleItem — позиция чека.
+//
+// На вход от кассира (executeSale) приходят ТОЛЬКО ProductID, UnitID и
+// QuantityDisplay — то, что кассир реально выбрал ("1 упаковка"). Сервер
+// сам подставляет ConversionFactor выбранной единицы продажи и считает
+// QuantityBase = QuantityDisplay * ConversionFactor — именно это число
+// списывается со склада и участвует в расчёте прибыли. Клиент никогда не
+// присылает QuantityBase напрямую: пересчёт — обязанность бэкенда, а не
+// фронтенда (иначе несогласованное округление на разных платформах могло
+// бы тихо разъехаться со складом).
 type SaleItem struct {
 	SaleID      int     `json:"sale_id"`
 	ProductID   int     `json:"product_id"`
-	Quantity    float64 `json:"quantity"`
-	PriceAtSale float64 `json:"price"`
+	UnitID      int     `json:"unit_id" binding:"required"`
+	// QuantityDisplay — что выбрал кассир в единицах продажи ("1 упаковка").
+	// Для чека/UI. НИКОГДА не используется для списания склада напрямую.
+	QuantityDisplay float64 `json:"quantity_display" binding:"required,gt=0"`
+	// QuantityBase — учётное количество в базовых единицах (шт/кг).
+	// Заполняется сервером при оформлении продажи, игнорируется если
+	// прислано клиентом (см. SaleRepository.ExecuteSale).
+	QuantityBase float64 `json:"quantity_base"`
+	PriceAtSale  float64 `json:"price"`
 }
 
 type Sale struct {

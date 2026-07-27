@@ -13,8 +13,9 @@ import (
 )
 
 type Handler struct {
-	productRepo *repository.ProductRepository
-	saleRepo    *repository.SaleRepository
+	productRepo     *repository.ProductRepository
+	productUnitRepo *repository.ProductUnitRepository
+	saleRepo        *repository.SaleRepository
 	userRepo    *repository.UserRepository
 	companyRepo *repository.CompanyRepository
 	shopRepo    *repository.ShopRepository
@@ -32,6 +33,7 @@ type Handler struct {
 
 func NewHandler(
 	productRepo *repository.ProductRepository,
+	productUnitRepo *repository.ProductUnitRepository,
 	saleRepo *repository.SaleRepository,
 	userRepo *repository.UserRepository,
 	companyRepo *repository.CompanyRepository,
@@ -41,7 +43,8 @@ func NewHandler(
 	dbPool *pgxpool.Pool,
 ) *Handler {
 	return &Handler{
-		productRepo: productRepo,
+		productRepo:     productRepo,
+		productUnitRepo: productUnitRepo,
 		saleRepo:    saleRepo,
 		userRepo:    userRepo,
 		companyRepo: companyRepo,
@@ -98,6 +101,13 @@ func (h *Handler) InitRoutes() *gin.Engine {
 		api.POST("/products/import", h.importProducts)
 		api.PATCH("/products/:id/inventory", h.updateInventory)
 		api.DELETE("/products/:id", h.deleteProduct)
+
+		// Единицы продажи товара (шт/упаковка/блок...) — задача: продажа одного
+		// товара в разных единицах.
+		api.GET("/products/:id/units", h.getProductUnits)
+		api.POST("/products/:id/units", h.createProductUnit)
+		api.PUT("/products/:id/units/:unit_id", h.updateProductUnit)
+		api.DELETE("/products/:id/units/:unit_id", h.deleteProductUnit)
 
 		// Продажи
 		sales := api.Group("/sales")
