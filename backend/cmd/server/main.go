@@ -36,7 +36,7 @@ func main() {
 	companyRepo := repository.NewCompanyRepository(dbPool)
 	shopRepo := repository.NewShopRepository(dbPool)
 	debtorRepo := repository.NewDebtorRepository(dbPool)
-
+	productUnitRepo := repository.NewProductUnitRepository(dbPool)
 	tgBot, err := telegram.NewBot(os.Getenv("TELEGRAM_APITOKEN"))
 	if err != nil {
 		l.Error("Ошибка запуска Telegram-бота", "error", err.Error())
@@ -46,7 +46,7 @@ func main() {
 
 	go startDailyReportScheduler(saleRepo, userRepo, tgBot, l)
 
-	handler := http.NewHandler(productRepo, saleRepo, userRepo, companyRepo, shopRepo, debtorRepo, tgBot, dbPool)
+	handler := http.NewHandler(productRepo, productUnitRepo, saleRepo, userRepo, companyRepo, shopRepo, debtorRepo, tgBot, dbPool)
 	router := handler.InitRoutes()
 	port := os.Getenv("PORT")
 	if port == "" {
