@@ -16,7 +16,6 @@ class _InventoryScreenState extends State<InventoryScreen>
   final _api = ApiService();
   final _authService = AuthService();
   final _searchCtrl = TextEditingController();
-  final _scrollCtrl = ScrollController();
 
   // ── Ошибки диалога пополнения ──
   String? _amountError;
@@ -28,10 +27,6 @@ class _InventoryScreenState extends State<InventoryScreen>
   // ── Данные ──
   List<Product> _products = [];
   bool _loading = true;
-  bool _loadingMore = false;
-  int _page = 1;
-  int _totalPages = 1;
-  static const int _limit = 50;
 
   // Токен поколения загрузки. Каждый reset=true увеличивает его; ответ
   // от уже устаревшего вызова (например, обновление списка запустилось
@@ -43,6 +38,9 @@ class _InventoryScreenState extends State<InventoryScreen>
 
   String _role = '';
   String _searchQuery = '';
+
+  // Фильтр по единице измерения: '' — все, 'pcs' — штучные, 'kg' — весовые.
+  String _filterUnit = '';
 
   @override
   Stream<void> get refreshStream =>
@@ -56,7 +54,6 @@ class _InventoryScreenState extends State<InventoryScreen>
     super.initState();
     _loadRole();
     _searchCtrl.addListener(_onSearchChanged);
-    _scrollCtrl.addListener(_onScroll);
   }
 
   Future<void> _loadRole() async {
@@ -67,28 +64,15 @@ class _InventoryScreenState extends State<InventoryScreen>
   @override
   void dispose() {
     _searchCtrl.dispose();
-    _scrollCtrl.dispose();
     super.dispose();
   }
 
-  // Загружает страницу товаров.
-  // reset=true — начать с первой страницы (pull-to-refresh или первый запуск).
+  // Загружает весь список товаров одним запросом (без пагинации).
   Future<void> _loadProducts({bool reset = false}) async {
-    late final int myGeneration;
-    if (reset) {
-      myGeneration = ++_loadGeneration;
-      setState(() {
-        _loading = true;
-        _page = 1;
-        _products = [];
-      });
-    } else {
-      if (_loadingMore || _page >= _totalPages) return;
-      myGeneration = _loadGeneration;
-      setState(() => _loadingMore = true);
-    }
+    final myGeneration = ++_loadGeneration;
+    setState(() => _loading = true);
 
-    final result = await _api.getProducts(page: _page, limit: _limit);
+    final products = await _api.getAllProducts();
 
     if (!mounted) return;
     // Пока шёл запрос, успел стартовать более новый reset (или экран
@@ -97,20 +81,9 @@ class _InventoryScreenState extends State<InventoryScreen>
     if (myGeneration != _loadGeneration) return;
 
     setState(() {
-      _products.addAll(result.data);
-      _totalPages = result.totalPages;
+      _products = products;
       _loading = false;
-      _loadingMore = false;
-      if (result.hasNextPage) _page++;
     });
-  }
-
-  // При скролле к концу списка — подгружаем следующую страницу.
-  void _onScroll() {
-    if (_scrollCtrl.position.pixels >=
-        _scrollCtrl.position.maxScrollExtent - 200) {
-      _loadProducts();
-    }
   }
 
   void _onSearchChanged() {
@@ -118,10 +91,14 @@ class _InventoryScreenState extends State<InventoryScreen>
   }
 
   // Локальная фильтрация уже загруженных данных.
-  // При пустом запросе показываем всё, иначе фильтруем по имени/штрихкоду.
+  // Фильтруем по единице измерения (кг/шт) и по имени/штрихкоду.
   List<Product> get _filtered {
-    if (_searchQuery.isEmpty) return _products;
-    return _products
+    var list = _products;
+    if (_filterUnit.isNotEmpty) {
+      list = list.where((p) => p.unit == _filterUnit).toList();
+    }
+    if (_searchQuery.isEmpty) return list;
+    return list
         .where(
           (p) =>
               p.name.toLowerCase().contains(_searchQuery) ||
@@ -502,6 +479,41 @@ class _InventoryScreenState extends State<InventoryScreen>
             ),
           ),
 
+          // Фильтр по единице измерения (кг/шт)
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: SizedBox(
+              height: 34,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  _UnitFilterChip(
+                    label: 'Ҳама',
+                    selected: _filterUnit.isEmpty,
+                    onTap: () => setState(() => _filterUnit = ''),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6),
+                    child: _UnitFilterChip(
+                      label: 'Дона (шт)',
+                      selected: _filterUnit == 'pcs',
+                      onTap: () => setState(() => _filterUnit = 'pcs'),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6),
+                    child: _UnitFilterChip(
+                      label: 'Кг',
+                      selected: _filterUnit == 'kg',
+                      onTap: () => setState(() => _filterUnit = 'kg'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
           // Список товаров
           Expanded(
             child: _loading
@@ -511,26 +523,11 @@ class _InventoryScreenState extends State<InventoryScreen>
                     child: _filtered.isEmpty
                         ? const Center(child: Text('Ягон чиз ёфт нашуд'))
                         : ListView.separated(
-                            controller: _scrollCtrl,
                             padding: const EdgeInsets.all(16),
-                            // +1 для индикатора загрузки в конце
-                            itemCount:
-                                _filtered.length + (_loadingMore ? 1 : 0),
+                            itemCount: _filtered.length,
                             separatorBuilder: (_, __) =>
                                 const SizedBox(height: 8),
                             itemBuilder: (context, i) {
-                              // Индикатор подгрузки следующей страницы
-                              if (i == _filtered.length) {
-                                return const Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 16),
-                                  child: Center(
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  ),
-                                );
-                              }
-
                               final p = _filtered[i];
                               final stockColor = _stockColor(p.stock);
 
@@ -624,6 +621,46 @@ class _InventoryScreenState extends State<InventoryScreen>
                   ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─── Вспомогательные виджеты ─────────────────────────────────────────────────
+
+class _UnitFilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _UnitFilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF4F6EF7) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? const Color(0xFF4F6EF7) : Colors.grey.shade300,
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: selected ? Colors.white : Colors.black87,
+          ),
+        ),
       ),
     );
   }

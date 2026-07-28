@@ -45,6 +45,24 @@ class SaleSendResult {
   bool get isRejected => status == SaleSendStatus.rejected;
 }
 
+/// Результат создания товара: при успехе несёт id (нужен, чтобы сразу же
+/// добавить доп. единицы продажи через addProductUnit), при неудаче — текст
+/// ошибки для показа продавцу.
+class ProductCreateResult {
+  final int? productId;
+  final String? errorMessage;
+
+  const ProductCreateResult._(this.productId, this.errorMessage);
+
+  factory ProductCreateResult.success(int productId) =>
+      ProductCreateResult._(productId, null);
+
+  factory ProductCreateResult.failure(String errorMessage) =>
+      ProductCreateResult._(null, errorMessage);
+
+  bool get isSuccess => productId != null;
+}
+
 /// Универсальный контейнер для ответов с пагинацией от сервера.
 class PaginatedResult<T> {
   final List<T> data;
@@ -102,7 +120,7 @@ class ApiService {
       try {
         final response = await http
             .get(
-              Uri.parse('$baseUrl/api/products/$barcode'),
+              Uri.parse('$baseUrl/api/products/barcode/$barcode'),
               headers: await _getHeaders(),
             )
             // Таймаут снижен с 10 до 3 секунд: это горячий путь кассы
@@ -129,12 +147,6 @@ class ApiService {
     return null;
   }
 
-  /// Возвращает все товары.
-  /// Онлайн: запрашивает API и обновляет полный кэш.
-  /// Офлайн: возвращает товары из SQLite-кэша.
-  /// Получает страницу товаров с сервера.
-  /// Возвращает [PaginatedResult] с полями data, total, page, limit, totalPages.
-  /// При офлайне возвращает кэшированные данные без пагинации (page=1).
   Future<PaginatedResult<Product>> getProducts({
     int page = 1,
     int limit = 50,
@@ -151,10 +163,6 @@ class ApiService {
           final items = (body['data'] as List)
               .map((j) => Product.fromJson(j as Map<String, dynamic>))
               .toList();
-          // Точечно освежаем в кэше только просмотренные товары — не
-          // затираем остальной офлайн-каталог и не ломаем его порядок.
-          // Полную пересборку кэша (весь каталог целиком, той же
-          // сортировкой, что и на сервере) делает refreshOfflineCache().
           await _db.upsertCachedProducts(
             (body['data'] as List).cast<Map<String, dynamic>>(),
           );
@@ -190,20 +198,6 @@ class ApiService {
     return result.data;
   }
 
-  /// Полностью обновляет офлайн-кэш каталога товаров.
-  ///
-  /// Раньше в кэш попадала только первая страница (максимум 200 товаров),
-  /// поэтому если склад был больше — офлайн-режим показывал не весь
-  /// каталог. Кроме того, кэш сохранял порядок только той страницы,
-  /// которая была загружена последней, что и приводило к ощущению
-  /// "всё перемешано" в офлайне.
-  ///
-  /// Здесь мы последовательно обходим все страницы (как их отдаёт
-  /// сервер, т.е. в том же порядке ORDER BY stock ASC, что и в онлайне)
-  /// и один раз перезаписываем локальный кэш целиком — так порядок и
-  /// состав товаров в офлайне полностью совпадают с онлайн-режимом.
-  /// Ничего не делает, если нет сети — вызывается на старте и при
-  /// восстановлении связи через [SyncService].
   Future<void> refreshOfflineCache() async {
     if (!ConnectivityService.instance.isOnline) return;
 
@@ -240,9 +234,6 @@ class ApiService {
       // т.к. cacheProducts перезаписывает всё одним batch-ом.
     }
 
-    // Заодно освежаем кэш продавцов терминала (для офлайн-входа по PIN),
-    // чтобы он не зависел от того, заходил ли кто-то на экран терминала
-    // онлайн после последнего обновления.
     try {
       final prefs = await SharedPreferences.getInstance();
       final companyId = prefs.getInt('company_id') ?? 0;
@@ -318,7 +309,12 @@ class ApiService {
   }
 
   /// Добавляет товар. Возвращает null при успехе, иначе — строку с ошибкой.
-  Future<String?> addProduct(Map<String, dynamic> productData) async {
+  /// Возвращает id созданного товара при успехе (product_id нужен, чтобы
+  /// следом одним заходом добавить доп. единицы продажи через
+  /// [addProductUnit]), либо текст ошибки, если создание не удалось.
+  Future<ProductCreateResult> addProduct(
+    Map<String, dynamic> productData,
+  ) async {
     try {
       final response = await http
           .post(
@@ -329,31 +325,74 @@ class ApiService {
           .timeout(const Duration(seconds: 15));
       _checkSubscription(response.statusCode);
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return null; // успех
+        final body = jsonDecode(response.body);
+        return ProductCreateResult.success(body['id'] as int);
       }
       // Пробуем достать сообщение из тела ответа
       try {
         final body = jsonDecode(response.body);
         final msg = body['error'] ?? body['message'] ?? body['detail'];
-        if (msg != null) return msg.toString();
+        if (msg != null) return ProductCreateResult.failure(msg.toString());
       } catch (_) {}
       // Fallback по статус-коду
       switch (response.statusCode) {
         case 400:
-          return 'Нодурустии додаҳо (400)';
+          return ProductCreateResult.failure('Нодурустии додаҳо (400)');
         case 401:
-          return 'Ваколат нест. Лутфан аз нав ворид шавед (401)';
+          return ProductCreateResult.failure(
+            'Ваколат нест. Лутфан аз нав ворид шавед (401)',
+          );
         case 403:
-          return 'Дастрасӣ манъ аст (403)';
+          return ProductCreateResult.failure('Дастрасӣ манъ аст (403)');
         case 409:
-          return 'Маҳсулот бо ин штрихкод аллакай мавҷуд аст (409)';
+          return ProductCreateResult.failure(
+            'Маҳсулот бо ин штрихкод аллакай мавҷуд аст (409)',
+          );
         case 422:
-          return 'Маълумот дуруст нест. Нархҳо ва миқдорро санҷед (422)';
+          return ProductCreateResult.failure(
+            'Маълумот дуруст нест. Нархҳо ва миқдорро санҷед (422)',
+          );
         case 500:
-          return 'Хатогии сервер. Каме дер кӯшиш кунед (500)';
+          return ProductCreateResult.failure(
+            'Хатогии сервер. Каме дер кӯшиш кунед (500)',
+          );
         default:
-          return 'Хатогӣ: ${response.statusCode}';
+          return ProductCreateResult.failure('Хатогӣ: ${response.statusCode}');
       }
+    } on TimeoutException {
+      return ProductCreateResult.failure(
+        'Вақт тамом шуд. Пайвастшавии интернетро санҷед',
+      );
+    } catch (e) {
+      return ProductCreateResult.failure('Хатогии пайвастшавӣ: $e');
+    }
+  }
+
+  /// Добавляет дополнительную единицу продажи (упаковка/блок/коробка...)
+  /// уже существующему товару. Возвращает null при успехе, иначе — текст
+  /// ошибки (например, штрихкод уже занят другой единицей).
+  Future<String?> addProductUnit(
+    int productId,
+    Map<String, dynamic> unitData,
+  ) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/products/$productId/units'),
+            headers: await _getHeaders(),
+            body: jsonEncode(unitData),
+          )
+          .timeout(const Duration(seconds: 15));
+      _checkSubscription(response.statusCode);
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return null; // успех
+      }
+      try {
+        final body = jsonDecode(response.body);
+        final msg = body['error'] ?? body['message'] ?? body['detail'];
+        if (msg != null) return msg.toString();
+      } catch (_) {}
+      return 'Хатогӣ: ${response.statusCode}';
     } on TimeoutException {
       return 'Вақт тамом шуд. Пайвастшавии интернетро санҷед';
     } catch (e) {

@@ -1,3 +1,55 @@
+/// ProductUnit — одна единица продажи товара (штука/упаковка/блок/коробка).
+///
+/// price задаётся НЕЗАВИСИМО от цены других единиц того же товара — никогда
+/// не вычисляется на клиенте как priceBase * conversionFactor, т.к. сервер
+/// хранит и отдаёт именно свою, отдельную цену за эту единицу.
+///
+/// barcode принадлежит именно единице продажи, а не товару в целом — так
+/// сканер на кассе может найти товар и по штрихкоду штуки, и по штрихкоду
+/// упаковки.
+class ProductUnit {
+  final int id;
+  final int productId;
+  final String label; // "шт", "упаковка", "блок"...
+  final double conversionFactor; // сколько базовых единиц (шт/кг) в этой единице
+  final double price;
+  final String? barcode;
+  final bool isBase;
+
+  const ProductUnit({
+    required this.id,
+    required this.productId,
+    required this.label,
+    required this.conversionFactor,
+    required this.price,
+    required this.isBase,
+    this.barcode,
+  });
+
+  factory ProductUnit.fromJson(Map<String, dynamic> json) {
+    return ProductUnit(
+      id: json['id'] ?? 0,
+      productId: json['product_id'] ?? 0,
+      label: json['label'] ?? '',
+      conversionFactor:
+          (json['conversion_factor'] as num?)?.toDouble() ?? 1.0,
+      price: (json['price'] as num?)?.toDouble() ?? 0.0,
+      barcode: json['barcode'] as String?,
+      isBase: json['is_base'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'product_id': productId,
+    'label': label,
+    'conversion_factor': conversionFactor,
+    'price': price,
+    'barcode': barcode,
+    'is_base': isBase,
+  };
+}
+
 class Product {
   final int id;
   final String name;
@@ -5,7 +57,8 @@ class Product {
   final double buyPrice;
   final double sellPrice;
   double stock;
-  final String unit; // 'pcs' (шт) или 'kg' (кг)
+  final String unit; // 'pcs' (шт) или 'kg' (кг) — базовая единица учёта склада
+  final List<ProductUnit> units;
 
   Product({
     required this.id,
@@ -15,10 +68,28 @@ class Product {
     required this.sellPrice,
     required this.stock,
     this.unit = 'pcs',
-  });
+    List<ProductUnit>? units,
+  }) : units = units ?? const [];
 
   /// Человекочитаемое название единицы измерения для UI.
   String get unitLabel => unit == 'kg' ? 'кг' : 'дона';
+
+  /// Базовая единица продажи товара ("шт"/"кг", conversion_factor = 1).
+  /// Существует всегда — создаётся автоматически при создании товара.
+  /// Фолбэк на синтетический ProductUnit нужен только для товаров, кэш
+  /// которых был создан ДО появления product_units (units == []) —
+  /// сам сервер такого не отдаёт.
+  ProductUnit get baseUnit => units.firstWhere(
+    (u) => u.isBase,
+    orElse: () => ProductUnit(
+      id: 0,
+      productId: id,
+      label: unitLabel,
+      conversionFactor: 1,
+      price: sellPrice,
+      isBase: true,
+    ),
+  );
 
   // Теперь мапим ключи именно так, как они приходят из Go
   factory Product.fromJson(Map<String, dynamic> json) {
@@ -30,6 +101,9 @@ class Product {
       sellPrice: (json['sell_price'] as num?)?.toDouble() ?? 0.0,
       stock: (json['stock'] as num?)?.toDouble() ?? 0.0,
       unit: (json['unit'] as String?) ?? 'pcs',
+      units: ((json['units'] as List?) ?? const [])
+          .map((u) => ProductUnit.fromJson(u as Map<String, dynamic>))
+          .toList(),
     );
   }
 }

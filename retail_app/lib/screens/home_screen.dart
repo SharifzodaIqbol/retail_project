@@ -172,12 +172,46 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (confirm != true) return;
 
+    // Страховка: если у какого-то товара в корзине не подгрузились units
+    // (например, сбой сети при сканировании), product.baseUnit тихо
+    // подставит синтетическую единицу с id = 0 (см. product.dart), которой
+    // нет в product_units на сервере — сервер отклонит весь чек с ошибкой
+    // "единица продажи не найдена: 0". Ловим это здесь, ДО отправки, чтобы
+    // кассир увидел понятную причину, а не общую ошибку оплаты.
+    final brokenItem = cart.items.values
+        .where((i) => i.product.baseUnit.id == 0)
+        .toList();
+    if (brokenItem.isNotEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Хатогӣ бо "${brokenItem.first.product.name}": маълумоти '
+              'воҳиди фурӯш пурра нашудааст. Маҳсулотро аз сабад хориҷ '
+              'карда, дубора скан кунед.',
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+      return;
+    }
+
     final saleData = {
+      // Корзина сейчас не хранит выбранную единицу продажи по позиции —
+      // добавление товара в корзину всегда происходит по его базовой
+      // единице (см. addProduct/addWeighedAmount), поэтому здесь явно
+      // берём i.product.baseUnit. Ключи JSON должны точно совпадать с
+      // domain.SaleItem на сервере: unit_id (обязателен, без него сервер
+      // видит id = 0 и отклоняет чек "единица продажи не найдена: 0") и
+      // quantity_display (а не quantity).
       'items': cart.items.values
           .map(
             (i) => {
               'product_id': i.product.id,
-              'quantity': i.quantity,
+              'unit_id': i.product.baseUnit.id,
+              'quantity_display': i.quantity,
               'price': i.product.sellPrice,
             },
           )
@@ -290,8 +324,12 @@ class _HomeScreenState extends State<HomeScreen> {
     CartProvider cart,
     dynamic item,
   ) {
-    final controller = TextEditingController(text: item.quantity.toString());
     final isKg = item.product.unit == 'kg';
+    final controller = TextEditingController(
+      text: isKg
+          ? item.quantity.toString()
+          : item.quantity.truncate().toString(),
+    );
     showDialog(
       context: context,
       builder: (context) => AlertDialog(

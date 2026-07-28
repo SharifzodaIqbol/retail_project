@@ -60,6 +60,13 @@ class DatabaseHelper {
         sell_price REAL NOT NULL,
         stock REAL NOT NULL,
         unit TEXT NOT NULL DEFAULT 'шт',
+        -- units — единицы продажи товара (шт/упаковка/блок...), сериализованные
+        -- в JSON-массив (как их отдаёт сервер в поле "units"). Храним как один
+        -- TEXT-блоб, а не отдельной таблицей: единицы всегда читаются и
+        -- перезаписываются ВМЕСТЕ с товаром одним запросом, отдельная таблица с
+        -- джойнами тут не даёт ничего, кроме лишних походов в SQLite на каждый
+        -- скан штрихкода на кассе.
+        units TEXT NOT NULL DEFAULT '[]',
         cached_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
       )
     ''');
@@ -230,6 +237,17 @@ class DatabaseHelper {
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_product_barcode ON product_cache(barcode) WHERE barcode != ''",
       );
     }
+
+    if (oldVersion < 6) {
+      // Продажа одного товара в разных единицах продажи (шт/упаковка/блок):
+      // кэшируем units вместе с товаром, чтобы карточки единиц на экране
+      // кассы отображались и в офлайне, а не только при наличии сети.
+      await db
+          .execute(
+            "ALTER TABLE product_cache ADD COLUMN units TEXT NOT NULL DEFAULT '[]'",
+          )
+          .catchError((_) {});
+    }
   }
 
   // ─── Офлайн-чеки ─────────────────────────────────────────────────────────
@@ -352,7 +370,8 @@ class DatabaseHelper {
   Future<void> _ensureMemLoaded() async {
     if (_memProducts != null) return;
     final db = await instance.database;
-    _memProducts = await db.query('product_cache');
+    final rows = await db.query('product_cache');
+    _memProducts = rows.map(_denormalizeProduct).toList();
     _rebuildBarcodeIndex();
   }
 
@@ -364,6 +383,13 @@ class DatabaseHelper {
     }
   }
 
+  // Строка для записи в SQLite (product_cache). 'units' здесь — JSON-строка:
+  // сама таблица хранит units как TEXT, а не List, поэтому сериализуем перед
+  // insert/replace. Разворачиваем обратно в List в [_ensureMemLoaded], сразу
+  // после чтения из БД — так весь остальной код (in-memory кэш, то что
+  // возвращается наружу в ApiService/Product.fromJson) работает с обычным
+  // List<dynamic>, как и с "живым" JSON от сервера, и не знает о том, что на
+  // диске это TEXT.
   Map<String, dynamic> _normalizeProduct(Map<String, dynamic> p) => {
     'id': p['id'],
     'name': p['name'],
@@ -372,7 +398,24 @@ class DatabaseHelper {
     'sell_price': (p['sell_price'] as num?)?.toDouble() ?? 0.0,
     'stock': (p['stock'] as num?)?.toDouble() ?? 0.0,
     'unit': p['unit'] ?? 'шт',
+    'units': jsonEncode(p['units'] ?? const []),
   };
+
+  /// Разворачивает сериализованное поле 'units' (TEXT в SQLite) обратно в
+  /// List<dynamic>, чтобы дальше по коду товар из кэша выглядел так же, как
+  /// товар, только что пришедший с сервера в виде JSON.
+  Map<String, dynamic> _denormalizeProduct(Map<String, dynamic> row) {
+    final copy = Map<String, dynamic>.from(row);
+    final rawUnits = copy['units'];
+    if (rawUnits is String) {
+      try {
+        copy['units'] = jsonDecode(rawUnits.isEmpty ? '[]' : rawUnits);
+      } catch (_) {
+        copy['units'] = const [];
+      }
+    }
+    return copy;
+  }
 
   /// Полностью заменяет кэш товаров (вызывать после успешного getAllProducts).
   Future<void> cacheProducts(List<Map<String, dynamic>> products) async {
@@ -392,8 +435,9 @@ class DatabaseHelper {
     await batch.commit(noResult: true);
 
     // Полная пересборка каталога — обновляем и in-memory копию целиком,
-    // чтобы следующий поиск сразу видел актуальные данные.
-    _memProducts = normalized;
+    // чтобы следующий поиск сразу видел актуальные данные. В памяти держим
+    // denormalized-вид (units уже List, а не JSON-строка) — см. _denormalizeProduct.
+    _memProducts = normalized.map(_denormalizeProduct).toList();
     _rebuildBarcodeIndex();
   }
 
@@ -418,11 +462,12 @@ class DatabaseHelper {
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
 
-      final idx = _memProducts!.indexWhere((e) => e['id'] == row['id']);
+      final memRow = _denormalizeProduct(row);
+      final idx = _memProducts!.indexWhere((e) => e['id'] == memRow['id']);
       if (idx >= 0) {
-        _memProducts![idx] = row;
+        _memProducts![idx] = memRow;
       } else {
-        _memProducts!.add(row);
+        _memProducts!.add(memRow);
       }
     }
     await batch.commit(noResult: true);

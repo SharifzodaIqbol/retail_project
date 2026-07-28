@@ -3,9 +3,102 @@ import '../services/api_service.dart';
 import '../services/data_refresh_service.dart';
 import 'package:retail_app/widgets/barcode_scanner.dart';
 
+/// Карточка одной доп. единицы продажи в форме добавления товара:
+/// название ("упаковка"), сколько штук внутри, и НЕЗАВИСИМАЯ цена за неё.
+class _ExtraUnitCard extends StatelessWidget {
+  final _ExtraUnitRow row;
+  final VoidCallback onRemove;
+
+  const _ExtraUnitCard({required this.row, required this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(top: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: row.labelController,
+                    decoration: const InputDecoration(
+                      labelText: 'Ном',
+                      hintText: 'мас: қуттӣ',
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  onPressed: onRemove,
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: row.factorController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Чанд дона дар дохил',
+                      hintText: 'мас: 20',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: row.priceController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Нархи ин воҳид',
+                      hintText: 'мас: 180.00',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: row.barcodeController,
+              decoration: const InputDecoration(
+                labelText: 'Штрихкоди ин воҳид (ихтиёрӣ)',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class AddProductScreen extends StatefulWidget {
   @override
   _AddProductScreenState createState() => _AddProductScreenState();
+}
+
+/// Одна строка "дополнительной единицы продажи" (упаковка/блок/коробка...)
+/// в форме создания товара. Цена вводится независимо от базовой цены за
+/// штуку — на практике штука иногда стоит даже дороже 1/N от упаковки.
+class _ExtraUnitRow {
+  final labelController = TextEditingController();
+  final factorController = TextEditingController(); // сколько штук в упаковке
+  final priceController = TextEditingController(); // цена за ВСЮ упаковку
+  final barcodeController = TextEditingController();
+
+  void dispose() {
+    labelController.dispose();
+    factorController.dispose();
+    priceController.dispose();
+    barcodeController.dispose();
+  }
 }
 
 class _AddProductScreenState extends State<AddProductScreen> {
@@ -21,6 +114,17 @@ class _AddProductScreenState extends State<AddProductScreen> {
 
   String _unit = 'pcs';
 
+  // Доп. единицы продажи (упаковка и т.п.), заводимые вместе с товаром.
+  final List<_ExtraUnitRow> _extraUnits = [];
+
+  void _addExtraUnitRow() {
+    setState(() => _extraUnits.add(_ExtraUnitRow()));
+  }
+
+  void _removeExtraUnitRow(int index) {
+    setState(() => _extraUnits.removeAt(index).dispose());
+  }
+
   @override
   void dispose() {
     _nameController.dispose();
@@ -28,6 +132,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
     _buyPriceController.dispose();
     _sellPriceController.dispose();
     _stockController.dispose();
+    for (final row in _extraUnits) {
+      row.dispose();
+    }
     super.dispose();
   }
 
@@ -35,8 +142,41 @@ class _AddProductScreenState extends State<AddProductScreen> {
   double? _parseNumber(String raw) =>
       double.tryParse(raw.trim().replaceAll(',', '.'));
 
+  /// Валидирует строки доп. единиц продажи. Возвращает текст первой найденной
+  /// ошибки, либо null если всё заполнено корректно. Строки с полностью
+  /// пустым названием пропускаются (значит продавец начал добавлять строку,
+  /// но передумал — не считаем это ошибкой).
+  String? _validateExtraUnits() {
+    for (final row in _extraUnits) {
+      final label = row.labelController.text.trim();
+      if (label.isEmpty) continue;
+
+      final factor = _parseNumber(row.factorController.text);
+      if (factor == null || factor <= 0) {
+        return '«$label»: дуруст нависед, чанд дона дар як воҳид (мас: 20)';
+      }
+      final price = _parseNumber(row.priceController.text);
+      if (price == null || price < 0) {
+        return '«$label»: нархро дуруст нависед';
+      }
+    }
+    return null;
+  }
+
   void _submitData() async {
     if (!_formKey.currentState!.validate()) return;
+
+    final extraUnitsError = _validateExtraUnits();
+    if (extraUnitsError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(extraUnitsError),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
 
     final buyPrice = _parseNumber(_buyPriceController.text)!;
     final sellPrice = _parseNumber(_sellPriceController.text)!;
@@ -65,18 +205,58 @@ class _AddProductScreenState extends State<AddProductScreen> {
       "unit": _unit,
     };
 
-    final error = await _apiService.addProduct(productData);
+    final result = await _apiService.addProduct(productData);
+
+    if (!result.isSuccess) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.errorMessage!),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+
+    // Базовый товар создан — теперь по очереди добавляем доп. единицы
+    // продажи (упаковка/блок...), если продавец их заполнил. Товар уже
+    // существует на сервере, поэтому ошибка здесь — это ошибка ОДНОЙ
+    // единицы, а не всего товара целиком, и не откатывает уже созданный товар.
+    final unitErrors = <String>[];
+    for (final row in _extraUnits) {
+      final label = row.labelController.text.trim();
+      if (label.isEmpty) continue;
+
+      final unitData = {
+        "label": label,
+        "conversion_factor": _parseNumber(row.factorController.text),
+        "price": _parseNumber(row.priceController.text),
+        "barcode": row.barcodeController.text.trim().isEmpty
+            ? null
+            : row.barcodeController.text.trim(),
+      };
+      final unitError = await _apiService.addProductUnit(
+        result.productId!,
+        unitData,
+      );
+      if (unitError != null) {
+        unitErrors.add('$label: $unitError');
+      }
+    }
 
     if (!mounted) return;
     setState(() => _loading = false);
 
-    if (error == null) {
-      // Сообщаем складу (InventoryScreen), что каталог изменился — без
-      // этого новый товар был виден только после ручного pull-to-refresh,
-      // потому что список товаров кэшируется в состоянии экрана и не
-      // перечитывается сам по себе.
-      DataRefreshService.instance.notifyProductChanged();
-      Navigator.pop(context);
+    // Сообщаем складу (InventoryScreen), что каталог изменился — без
+    // этого новый товар был виден только после ручного pull-to-refresh,
+    // потому что список товаров кэшируется в состоянии экрана и не
+    // перечитывается сам по себе.
+    DataRefreshService.instance.notifyProductChanged();
+    Navigator.pop(context);
+
+    if (unitErrors.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Маҳсулот бо муваффақият илова карда шуд!'),
@@ -84,11 +264,16 @@ class _AddProductScreenState extends State<AddProductScreen> {
         ),
       );
     } else {
+      // Товар создан, но какие-то доп. единицы не сохранились (например,
+      // штрихкод уже занят) — продавец должен об этом узнать явно, а не
+      // молча остаться без второй единицы продажи.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 4),
+          content: Text(
+            'Маҳсулот илова шуд, аммо баъзе воҳидҳо не: ${unitErrors.join("; ")}',
+          ),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 6),
         ),
       );
     }
@@ -244,6 +429,34 @@ class _AddProductScreenState extends State<AddProductScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Воҳидҳои иловагӣ (масалан, қуттӣ)',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  TextButton.icon(
+                    onPressed: _addExtraUnitRow,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Илова кардан'),
+                  ),
+                ],
+              ),
+              const Text(
+                'Ихтиёрӣ: агар маҳсулот ҳам донагӣ, ҳам қуттигӣ фурӯхта шавад — '
+                'нархи қуттиро мустақилона нависед (на ба таври автоматӣ '
+                'ҳисобшуда аз нархи як дона).',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+              for (int i = 0; i < _extraUnits.length; i++)
+                _ExtraUnitCard(
+                  row: _extraUnits[i],
+                  onRemove: () => _removeExtraUnitRow(i),
+                ),
               const SizedBox(height: 30),
               ElevatedButton(
                 onPressed: _loading ? null : _submitData,
