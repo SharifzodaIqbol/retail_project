@@ -80,10 +80,12 @@ func parseImportFloat(raw string) (float64, error) {
 //
 // Формат: каждая доп. единица продажи — это группа из 4 колонок подряд,
 // начиная с индекса 6:
-//   [6] label              — например "упаковка"
-//   [7] conversion_factor  — сколько базовых единиц (шт) в ней, например 20
-//   [8] price              — цена именно за эту единицу продажи
-//   [9] barcode            — необязательно, может быть пустым
+//
+//	[6] label              — например "упаковка"
+//	[7] conversion_factor  — сколько базовых единиц (шт) в ней, например 20
+//	[8] price              — цена именно за эту единицу продажи
+//	[9] barcode            — необязательно, может быть пустым
+//
 // Далее группы по 4 колонки могут повторяться (10-13, 14-17...) для
 // описания ещё одной единицы продажи того же товара в этой же строке.
 func parseExtraUnitColumns(row []string) ([]domain.CreateProductUnitRequest, error) {
@@ -352,6 +354,12 @@ func (h *Handler) getAllProducts(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "Ошибка получения товаров"})
 		return
 	}
+
+	// Без этого products[i].Units остаётся пустым, и клиент откатывается на
+	// синтетическую единицу продажи (id = 0), которой нет в product_units —
+	// оформление продажи по ней падает с "единица продажи не найдена: 0".
+	h.attachUnits(c, companyID, products)
+
 	c.JSON(200, buildPage(products, total, page, limit))
 }
 func (h *Handler) createProduct(c *gin.Context) {
