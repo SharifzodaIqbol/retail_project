@@ -11,10 +11,12 @@ class ProductUnit {
   final int id;
   final int productId;
   final String label; // "шт", "упаковка", "блок"...
-  final double conversionFactor; // сколько базовых единиц (шт/кг) в этой единице
+  final double
+  conversionFactor; // сколько базовых единиц (шт/кг) в этой единице
   final double price;
   final String? barcode;
   final bool isBase;
+  final bool isActive;
 
   const ProductUnit({
     required this.id,
@@ -23,6 +25,7 @@ class ProductUnit {
     required this.conversionFactor,
     required this.price,
     required this.isBase,
+    this.isActive = true,
     this.barcode,
   });
 
@@ -31,11 +34,11 @@ class ProductUnit {
       id: json['id'] ?? 0,
       productId: json['product_id'] ?? 0,
       label: json['label'] ?? '',
-      conversionFactor:
-          (json['conversion_factor'] as num?)?.toDouble() ?? 1.0,
+      conversionFactor: (json['conversion_factor'] as num?)?.toDouble() ?? 1.0,
       price: (json['price'] as num?)?.toDouble() ?? 0.0,
       barcode: json['barcode'] as String?,
       isBase: json['is_base'] as bool? ?? false,
+      isActive: json['is_active'] as bool? ?? true,
     );
   }
 
@@ -47,6 +50,7 @@ class ProductUnit {
     'price': price,
     'barcode': barcode,
     'is_base': isBase,
+    'is_active': isActive,
   };
 }
 
@@ -90,6 +94,22 @@ class Product {
       isBase: true,
     ),
   );
+
+  /// true, если у товара кроме базовой единицы ("шт"/"кг") есть хотя бы
+  /// одна доп. единица продажи (упаковка/блок/коробка...). Экран кассы
+  /// использует это, чтобы решить, нужно ли вообще спрашивать продавца,
+  /// в какой единице он продаёт товар, или добавлять сразу по умолчанию.
+  bool get hasMultipleUnits => units.where((u) => u.isActive).length > 1;
+
+  /// Находит единицу продажи по её СОБСТВЕННОМУ штрихкоду (не по штрихкоду
+  /// товара в целом) — например, кассир отсканировал штрихкод именно на
+  /// упаковке. Возвращает null, если ни у одной единицы нет такого кода.
+  ProductUnit? unitByBarcode(String barcode) {
+    for (final u in units) {
+      if (u.barcode != null && u.barcode == barcode) return u;
+    }
+    return null;
+  }
 
   // Теперь мапим ключи именно так, как они приходят из Go
   factory Product.fromJson(Map<String, dynamic> json) {

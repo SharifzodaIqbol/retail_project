@@ -159,10 +159,17 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
             onPressed: () async {
               Navigator.pop(context);
               final uri = Uri.parse(deeplink);
-              if (await canLaunchUrl(uri)) {
+              try {
                 await launchUrl(uri, mode: LaunchMode.externalApplication);
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Кушодани Telegram муяссар нашуд: $e'),
+                    ),
+                  );
+                }
               }
-              // После открытия обновляем статус через небольшую задержку
               await Future.delayed(const Duration(seconds: 3));
               _load();
             },

@@ -101,7 +101,16 @@ class _HomeScreenState extends State<HomeScreen> {
         if (product.unit == 'kg') {
           _promptWeightAndAdd(product);
         } else {
-          Provider.of<CartProvider>(context, listen: false).addProduct(product);
+          // Штрихкод мог принадлежать как товару в целом, так и конкретной
+          // единице продажи (например, отдельный штрихкод на упаковке).
+          // Если это так — добавляем в корзину ИМЕННО эту единицу, а не
+          // базовую "шт" по умолчанию, иначе кассир сканирует упаковку, а
+          // продаётся и списывается со склада штука.
+          final matchedUnit = product.unitByBarcode(barcode);
+          Provider.of<CartProvider>(
+            context,
+            listen: false,
+          ).addProduct(product, unit: matchedUnit);
           _requestScannerFocus();
         }
       }
@@ -144,12 +153,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (RegExp(r'^\d+$').hasMatch(text)) {
       _processScannedBarcode(text);
     } else if (_suggestions.isNotEmpty) {
-      final found = _suggestions.first;
-      if (found.unit == 'kg') {
-        _promptWeightAndAdd(found);
-      } else {
-        Provider.of<CartProvider>(context, listen: false).addProduct(found);
-      }
+      _addProductSmart(_suggestions.first);
     }
 
     _searchController.clear();
@@ -157,6 +161,107 @@ class _HomeScreenState extends State<HomeScreen> {
 
     FocusManager.instance.primaryFocus?.unfocus();
     _requestScannerFocus();
+  }
+
+  /// Точка входа для "нажали на товар в поиске/списке" — сама решает, что
+  /// делать: спросить вес (кг), спросить единицу продажи (если у товара
+  /// есть упаковка/блок помимо "шт"), или просто добавить как есть.
+  void _addProductSmart(Product product) async {
+    if (product.unit == 'kg') {
+      _promptWeightAndAdd(product);
+      return;
+    }
+    if (product.hasMultipleUnits) {
+      final unit = await _pickUnit(product);
+      if (unit == null) return; // кассир закрыл окно выбора — ничего не делаем
+      if (!mounted) return;
+      Provider.of<CartProvider>(
+        context,
+        listen: false,
+      ).addProduct(product, unit: unit);
+      _requestScannerFocus();
+      return;
+    }
+    Provider.of<CartProvider>(context, listen: false).addProduct(product);
+    _requestScannerFocus();
+  }
+
+  /// Показывает продавцу все единицы продажи товара (шт/упаковка/блок...)
+  /// одним списком с ценой каждой — выбор одним тапом, без арифметики в
+  /// уме. Возвращает выбранную единицу либо null, если окно закрыли.
+  Future<ProductUnit?> _pickUnit(Product product) {
+    final activeUnits = product.units.where((u) => u.isActive).toList();
+    return showModalBottomSheet<ProductUnit>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                  product.name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'Дар кадом воҳид мефурӯшед?',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                ),
+              ),
+              const SizedBox(height: 4),
+              ...activeUnits.map(
+                (u) => ListTile(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4F6EF7).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      u.isBase
+                          ? Icons.inventory_2_outlined
+                          : Icons.widgets_outlined,
+                      color: const Color(0xFF4F6EF7),
+                    ),
+                  ),
+                  title: Text(
+                    u.label,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: u.isBase
+                      ? null
+                      : Text(
+                          '${u.conversionFactor.toStringAsFixed(0)} дона дар дохил',
+                        ),
+                  trailing: Text(
+                    '${u.price.toStringAsFixed(2)} сомонӣ',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
+                  ),
+                  onTap: () => Navigator.pop(ctx, u),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   void _checkout(BuildContext context) async {
@@ -173,13 +278,13 @@ class _HomeScreenState extends State<HomeScreen> {
     if (confirm != true) return;
 
     // Страховка: если у какого-то товара в корзине не подгрузились units
-    // (например, сбой сети при сканировании), product.baseUnit тихо
-    // подставит синтетическую единицу с id = 0 (см. product.dart), которой
-    // нет в product_units на сервере — сервер отклонит весь чек с ошибкой
+    // (например, сбой сети при сканировании), CartItem тихо подставит
+    // синтетическую единицу с id = 0 (см. product.dart), которой нет в
+    // product_units на сервере — сервер отклонит весь чек с ошибкой
     // "единица продажи не найдена: 0". Ловим это здесь, ДО отправки, чтобы
     // кассир увидел понятную причину, а не общую ошибку оплаты.
     final brokenItem = cart.items.values
-        .where((i) => i.product.baseUnit.id == 0)
+        .where((i) => i.selectedUnit.id == 0)
         .toList();
     if (brokenItem.isNotEmpty) {
       if (mounted) {
@@ -199,20 +304,21 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     final saleData = {
-      // Корзина сейчас не хранит выбранную единицу продажи по позиции —
-      // добавление товара в корзину всегда происходит по его базовой
-      // единице (см. addProduct/addWeighedAmount), поэтому здесь явно
-      // берём i.product.baseUnit. Ключи JSON должны точно совпадать с
-      // domain.SaleItem на сервере: unit_id (обязателен, без него сервер
+      // Каждая позиция корзины хранит свою выбранную единицу продажи
+      // (i.selectedUnit — "шт" по умолчанию, но кассир мог явно выбрать
+      // "упаковка"/"блок" через _pickUnit). Именно unit_id и цену ЭТОЙ
+      // единицы отправляем на сервер — сервер сам пересчитает списание
+      // склада по её conversion_factor. Ключи JSON должны точно совпадать
+      // с domain.SaleItem на сервере: unit_id (обязателен, без него сервер
       // видит id = 0 и отклоняет чек "единица продажи не найдена: 0") и
       // quantity_display (а не quantity).
       'items': cart.items.values
           .map(
             (i) => {
               'product_id': i.product.id,
-              'unit_id': i.product.baseUnit.id,
+              'unit_id': i.selectedUnit.id,
               'quantity_display': i.quantity,
-              'price': i.product.sellPrice,
+              'price': i.selectedUnit.price,
             },
           )
           .toList(),
@@ -589,12 +695,72 @@ class _HomeScreenState extends State<HomeScreen> {
                                                   fontWeight: FontWeight.w600,
                                                 ),
                                               ),
-                                              Text(
-                                                '${item.product.sellPrice.toStringAsFixed(2)} сомонӣ',
-                                                style: const TextStyle(
-                                                  color: Colors.grey,
-                                                  fontSize: 13,
-                                                ),
+                                              Row(
+                                                children: [
+                                                  Text(
+                                                    '${item.selectedUnit.price.toStringAsFixed(2)} сомонӣ',
+                                                    style: const TextStyle(
+                                                      color: Colors.grey,
+                                                      fontSize: 13,
+                                                    ),
+                                                  ),
+                                                  if (item
+                                                      .product
+                                                      .hasMultipleUnits) ...[
+                                                    const SizedBox(width: 6),
+                                                    GestureDetector(
+                                                      onTap: () async {
+                                                        final unit =
+                                                            await _pickUnit(
+                                                              item.product,
+                                                            );
+                                                        if (unit == null ||
+                                                            !mounted)
+                                                          return;
+                                                        Provider.of<
+                                                              CartProvider
+                                                            >(
+                                                              context,
+                                                              listen: false,
+                                                            )
+                                                            .changeUnit(
+                                                              item.product.id,
+                                                              unit,
+                                                            );
+                                                        _requestScannerFocus();
+                                                      },
+                                                      child: Container(
+                                                        padding:
+                                                            const EdgeInsets.symmetric(
+                                                              horizontal: 6,
+                                                              vertical: 1,
+                                                            ),
+                                                        decoration: BoxDecoration(
+                                                          color: const Color(
+                                                            0xFF4F6EF7,
+                                                          ).withOpacity(0.1),
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                6,
+                                                              ),
+                                                        ),
+                                                        child: Text(
+                                                          '/ ${item.selectedUnit.label} ▾',
+                                                          style:
+                                                              const TextStyle(
+                                                                color: Color(
+                                                                  0xFF4F6EF7,
+                                                                ),
+                                                                fontSize: 12,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w600,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ],
                                               ),
                                             ],
                                           ),
@@ -661,7 +827,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                                     item.product,
                                                   );
                                                 } else {
-                                                  cart.addProduct(item.product);
+                                                  cart.addProduct(
+                                                    item.product,
+                                                    unit: item.selectedUnit,
+                                                  );
                                                   _requestScannerFocus();
                                                 }
                                               },
@@ -671,7 +840,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                         SizedBox(
                                           width: 80,
                                           child: Text(
-                                            (item.product.sellPrice *
+                                            (item.selectedUnit.price *
                                                     item.quantity)
                                                 .toStringAsFixed(2),
                                             textAlign: TextAlign.right,
@@ -786,7 +955,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         return ListTile(
                           title: Text(p.name),
                           subtitle: Text(
-                            '${p.sellPrice.toStringAsFixed(2)} сомонӣ.',
+                            p.hasMultipleUnits
+                                ? 'аз ${p.sellPrice.toStringAsFixed(2)} сомонӣ · якчанд воҳид'
+                                : '${p.sellPrice.toStringAsFixed(2)} сомонӣ.',
                             style: const TextStyle(fontSize: 12),
                           ),
                           leading: Container(
@@ -807,12 +978,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               _suggestions = [];
                               _searchController.clear();
                             });
-                            if (p.unit == 'kg') {
-                              _promptWeightAndAdd(p);
-                            } else {
-                              cart.addProduct(p);
-                              _requestScannerFocus();
-                            }
+                            _addProductSmart(p);
                           },
                         );
                       },
