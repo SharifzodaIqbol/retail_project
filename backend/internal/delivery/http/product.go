@@ -382,12 +382,16 @@ func (h *Handler) createProduct(c *gin.Context) {
 
 	p.CompanyID = c.MustGet("company_id").(int)
 	p.ShopID = c.MustGet("shop_id").(int)
-	if err := h.productRepo.Create(context.Background(), p); err != nil {
+	productID, err := h.productRepo.Create(context.Background(), p)
+	if err != nil {
 		logErr(c, err, "Ошибка создания товара", "company_id", p.CompanyID, "barcode", p.Barcode)
 		c.JSON(500, gin.H{"error": "Ошибка создания товара"})
 		return
 	}
-	c.JSON(200, gin.H{"status": "ok"})
+	// id нужен клиенту сразу же, чтобы он мог одним заходом добавить
+	// дополнительные единицы продажи (упаковка/блок...) тому же товару,
+	// не заставляя продавца заново искать только что созданный товар.
+	c.JSON(200, gin.H{"status": "ok", "id": productID})
 }
 
 func (h *Handler) updateInventory(c *gin.Context) {

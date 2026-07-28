@@ -20,10 +20,10 @@ func NewProductRepository(db *pgxpool.Pool) *ProductRepository {
 // единица должна существовать всегда — на неё опирается продажа "по
 // умолчанию", когда для товара ещё не завели дополнительные единицы
 // (упаковку, блок...).
-func (r *ProductRepository) Create(ctx context.Context, p domain.Product) error {
+func (r *ProductRepository) Create(ctx context.Context, p domain.Product) (int, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return err
+		return -1, err
 	}
 	defer tx.Rollback(ctx)
 
@@ -34,7 +34,7 @@ func (r *ProductRepository) Create(ctx context.Context, p domain.Product) error 
 		p.CompanyID, p.ShopID, p.Name, p.Barcode, p.BuyPrice, p.SellPrice, p.Stock, p.Unit,
 	).Scan(&productID)
 	if err != nil {
-		return err
+		return productID, err
 	}
 
 	baseLabel := "шт"
@@ -47,10 +47,10 @@ func (r *ProductRepository) Create(ctx context.Context, p domain.Product) error 
 		p.CompanyID, productID, baseLabel, p.SellPrice, p.Barcode,
 	)
 	if err != nil {
-		return err
+		return productID, err
 	}
 
-	return tx.Commit(ctx)
+	return productID, tx.Commit(ctx)
 }
 
 // GetAll — возвращает страницу товаров текущего магазина с пагинацией.
