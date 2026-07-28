@@ -23,7 +23,7 @@ func NewProductRepository(db *pgxpool.Pool) *ProductRepository {
 func (r *ProductRepository) Create(ctx context.Context, p domain.Product) (int, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return -1, err
+		return 0, err
 	}
 	defer tx.Rollback(ctx)
 
@@ -34,7 +34,7 @@ func (r *ProductRepository) Create(ctx context.Context, p domain.Product) (int, 
 		p.CompanyID, p.ShopID, p.Name, p.Barcode, p.BuyPrice, p.SellPrice, p.Stock, p.Unit,
 	).Scan(&productID)
 	if err != nil {
-		return productID, err
+		return 0, err
 	}
 
 	baseLabel := "шт"
@@ -47,7 +47,7 @@ func (r *ProductRepository) Create(ctx context.Context, p domain.Product) (int, 
 		p.CompanyID, productID, baseLabel, p.SellPrice, p.Barcode,
 	)
 	if err != nil {
-		return productID, err
+		return 0, err
 	}
 
 	return productID, tx.Commit(ctx)
