@@ -52,7 +52,7 @@ func buildPage(data interface{}, total, page, limit int) gin.H {
 func normalizeUnit(raw string) (string, error) {
 	v := strings.ToLower(strings.TrimSpace(raw))
 	switch v {
-	case "", "шт", "шт.", "штук", "штука", "штуки", "pcs", "pc":
+	case "", "шт", "шт.", "штук", "штука", "штуки","дона", "дона.", "дона,", "pcs", "pc":
 		return domain.UnitPcs, nil
 	case "кг", "кг.", "килограмм", "килограммы", "kg":
 		return domain.UnitKg, nil
