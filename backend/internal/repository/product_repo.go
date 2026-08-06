@@ -125,6 +125,23 @@ func (r *ProductRepository) GetByUnitBarcode(ctx context.Context, companyID, sho
 	return &p, nil
 }
 
+// BarcodeExists — проверяет, занят ли штрихкод в рамках компании. Уникальный
+// индекс в БД — (company_id, barcode), поэтому проверяем именно так же, а
+// не по одному магазину: иначе можно было бы случайно сгенерировать код,
+// который тут же столкнётся с constraint при INSERT в другом магазине той
+// же компании.
+func (r *ProductRepository) BarcodeExists(ctx context.Context, companyID int, barcode string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM products WHERE company_id = $1 AND barcode = $2)`,
+		companyID, barcode,
+	).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 // SearchByName — ищет товары по названию в рамках одного магазина.
 func (r *ProductRepository) SearchByName(ctx context.Context, companyID, shopID int, name string) ([]domain.Product, error) {
 	query := `SELECT id, name, barcode, sell_price, stock, unit FROM products 

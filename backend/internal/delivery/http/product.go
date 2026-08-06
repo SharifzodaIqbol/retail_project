@@ -52,7 +52,7 @@ func buildPage(data interface{}, total, page, limit int) gin.H {
 func normalizeUnit(raw string) (string, error) {
 	v := strings.ToLower(strings.TrimSpace(raw))
 	switch v {
-	case "", "шт", "шт.", "штук", "штука", "штуки","дона", "дона.", "дона,", "pcs", "pc":
+	case "", "шт", "шт.", "штук", "штука", "штуки", "pcs", "pc":
 		return domain.UnitPcs, nil
 	case "кг", "кг.", "килограмм", "килограммы", "kg":
 		return domain.UnitKg, nil
@@ -269,6 +269,42 @@ func (h *Handler) importProducts(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+// generateBarcode — GET /api/products/generate-barcode
+// Возвращает свежий, ещё никем не занятый в рамках компании внутренний
+// EAN-13 штрихкод (см. domain.GenerateInternalEAN13). Ничего не сохраняет —
+// это просто предложение конкретного значения, которое клиент показывает
+// продавцу и заполняет им поле "Штрихкод" перед сохранением товара; сам
+// товар создаётся обычным POST /api/products как и раньше. Коллизия при
+// сохранении (если код неудачно совпал) по-прежнему ловится constraint'ом
+// БД и обрабатывается как обычный 409, так что гонка безопасна.
+func (h *Handler) generateBarcode(c *gin.Context) {
+	companyID := c.MustGet("company_id").(int)
+
+	const maxAttempts = 10
+	for i := 0; i < maxAttempts; i++ {
+		candidate, err := domain.GenerateInternalEAN13()
+		if err != nil {
+			logErr(c, err, "Генерация штрихкода: ошибка генератора")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось сгенерировать штрихкод"})
+			return
+		}
+		exists, err := h.productRepo.BarcodeExists(context.Background(), companyID, candidate)
+		if err != nil {
+			logErr(c, err, "Генерация штрихкода: ошибка проверки уникальности", "company_id", companyID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось сгенерировать штрихкод"})
+			return
+		}
+		if !exists {
+			c.JSON(http.StatusOK, gin.H{"barcode": candidate})
+			return
+		}
+	}
+	// Крайне маловероятно (10 подряд случайных 10-значных коллизий), но
+	// честно сообщаем об этом, а не отдаём заведомо занятый код.
+	logWarn(c, "Генерация штрихкода: не удалось подобрать свободный код", "company_id", companyID, "attempts", maxAttempts)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось подобрать свободный штрихкод, попробуйте ещё раз"})
 }
 
 func (h *Handler) getProductByBarcode(c *gin.Context) {
