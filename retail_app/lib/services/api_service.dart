@@ -115,6 +115,31 @@ class ApiService {
 
   // ─── Товары ──────────────────────────────────────────────────────────────
 
+  /// Просит сервер подобрать свободный (ещё никем не занятый в рамках
+  /// компании) внутренний штрихкод для товара без своего кода — см.
+  /// generateBarcode на бэкенде. Ничего не сохраняет, просто предлагает
+  /// значение, которым можно заполнить поле "Штрихкод" перед сохранением
+  /// товара. Возвращает null при любой ошибке — вызывающий код должен
+  /// показать это как обычную сетевую/серверную ошибку.
+  Future<String?> generateBarcode() async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/api/products/generate-barcode'),
+            headers: await _getHeaders(),
+          )
+          .timeout(const Duration(seconds: 10));
+      _checkSubscription(response.statusCode);
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        return json['barcode'] as String?;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<Product?> getProductByBarcode(String barcode) async {
     if (ConnectivityService.instance.isOnline) {
       try {

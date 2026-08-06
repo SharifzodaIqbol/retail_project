@@ -118,6 +118,39 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
                   'Маҳсулоте ки штрих-кодаш мавҷуд аст нав карда мешавад, дигар маҳсулотҳо ҳамчун нав илова карда мешаванд.',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
+                const SizedBox(height: 20),
+                const Text(
+                  'Воҳидҳои иловагӣ (масалан, упаковка/блок)',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Агар маҳсулот на танҳо донагӣ, балки ҳамчун упаковка ё блок ҳам фурӯхта шавад, '
+                  'пас аз сутуни F метавонед гурӯҳҳои 4-сутунаро илова кунед (ҳар воҳиди иловагӣ — '
+                  'як гурӯҳ). Метавонед якчанд гурӯҳ пай дар пай нависед, агар якчанд воҳид лозим бошад:',
+                  style: TextStyle(color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                const _ColumnRow(
+                  letter: 'G',
+                  label: 'Номи воҳид (масалан, "упаковка")',
+                ),
+                const _ColumnRow(
+                  letter: 'H',
+                  label: 'Дар як воҳид чанд дона (масалан, 20)',
+                ),
+                const _ColumnRow(letter: 'I', label: 'Нархи фурӯши ин воҳид'),
+                const _ColumnRow(
+                  letter: 'J',
+                  label: 'Штрихкоди ин воҳид (ихтиёрӣ)',
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Барои воҳиди дуюми иловагӣ ҳамин гурӯҳро дар сутунҳои K, L, M, N нависед, '
+                  'барои сеюм — дар O, P, Q, R ва ҳоказо. Агар сутуни номи воҳид (G, K, O...) холи бошад, '
+                  'маънои онро дорад, ки воҳиди иловагӣ дар ин сатр нест — ин хато нест.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
               ],
             ),
           ),

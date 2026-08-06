@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:barcode_widget/barcode_widget.dart';
 import '../services/api_service.dart';
 import '../services/data_refresh_service.dart';
 import 'package:retail_app/widgets/barcode_scanner.dart';
@@ -79,6 +80,43 @@ class _ExtraUnitCard extends StatelessWidget {
   }
 }
 
+/// Карточка с картинкой штрихкода под полем ввода — и для отсканированного,
+/// и для сгенерированного, и для введённого вручную кода. Смысл: продавец
+/// сразу видит готовое изображение, которое можно сфотографировать и
+/// распечатать/наклеить на товар, не открывая товар заново после сохранения.
+/// Code128 выбран вместо EAN13, потому что он кодирует ЛЮБУЮ строку
+/// (сканер может вернуть код другого формата, не только 13-значный).
+class _BarcodePreviewCard extends StatelessWidget {
+  final String data;
+
+  const _BarcodePreviewCard({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Colors.grey.shade50,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        child: Column(
+          children: [
+            BarcodeWidget(
+              barcode: Barcode.code128(),
+              data: data,
+              height: 64,
+              drawText: true,
+              style: const TextStyle(fontSize: 12),
+              errorBuilder: (context, error) => Text(
+                'Ин рамз барои штрихкод мувофиқ нест',
+                style: TextStyle(color: Colors.red.shade700, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class AddProductScreen extends StatefulWidget {
   @override
   _AddProductScreenState createState() => _AddProductScreenState();
@@ -117,6 +155,44 @@ class _AddProductScreenState extends State<AddProductScreen> {
   // Доп. единицы продажи (упаковка и т.п.), заводимые вместе с товаром.
   final List<_ExtraUnitRow> _extraUnits = [];
 
+  // true, пока идёт запрос свободного штрихкода на сервер — блокирует кнопку
+  // "Сохтан" (сгенерировать), чтобы продавец не наплодил параллельных
+  // запросов повторными тапами.
+  bool _generatingBarcode = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Перерисовываем экран при любом изменении штрихкода (вручную,
+    // сканером или генератором), чтобы карточка-превью со штрихкодом под
+    // полем появлялась/исчезала и обновлялась сама, без отдельной кнопки
+    // "показать".
+    _barcodeController.addListener(_onBarcodeChanged);
+  }
+
+  void _onBarcodeChanged() => setState(() {});
+
+  /// Просит сервер подобрать свободный внутренний штрихкод и подставляет
+  /// его в поле — сразу видно и значение, и штрихкод-картинку снизу, можно
+  /// сфотографировать/распечатать и наклеить на товар до сохранения.
+  Future<void> _generateBarcode() async {
+    setState(() => _generatingBarcode = true);
+    final barcode = await _apiService.generateBarcode();
+    if (!mounted) return;
+    setState(() => _generatingBarcode = false);
+
+    if (barcode == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Штрихкодро сохта натавонистем. Пайвастшавиро санҷед.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    setState(() => _barcodeController.text = barcode);
+  }
+
   void _addExtraUnitRow() {
     setState(() => _extraUnits.add(_ExtraUnitRow()));
   }
@@ -127,6 +203,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
 
   @override
   void dispose() {
+    _barcodeController.removeListener(_onBarcodeChanged);
     _nameController.dispose();
     _barcodeController.dispose();
     _buyPriceController.dispose();
@@ -314,23 +391,58 @@ class _AddProductScreenState extends State<AddProductScreen> {
                   labelText:
                       'Штрихкод (ихтиёрӣ)', // Можно добавить надпись "необязательно"
                   prefixIcon: const Icon(Icons.qr_code),
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.camera_alt, color: Colors.blue),
-                    onPressed: () async {
-                      final String? scannedCode = await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => BarcodeScannerWidget(),
-                        ),
-                      );
-                      if (scannedCode != null) {
-                        setState(() => _barcodeController.text = scannedCode);
-                      }
-                    },
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Товар без штрихкода — самый частый случай для
+                      // местных/весовых товаров без заводской упаковки.
+                      // Одним тапом получаем от сервера свободный код,
+                      // ничего не печатая руками.
+                      _generatingBarcode
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : IconButton(
+                              tooltip: 'Штрихкоди худкор созед',
+                              icon: const Icon(
+                                Icons.auto_awesome,
+                                color: Colors.blue,
+                              ),
+                              onPressed: _generateBarcode,
+                            ),
+                      IconButton(
+                        tooltip: 'Бо камера сканер кунед',
+                        icon: const Icon(Icons.camera_alt, color: Colors.blue),
+                        onPressed: () async {
+                          final String? scannedCode = await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => BarcodeScannerWidget(),
+                            ),
+                          );
+                          if (scannedCode != null) {
+                            setState(
+                              () => _barcodeController.text = scannedCode,
+                            );
+                          }
+                        },
+                      ),
+                    ],
                   ),
                 ),
                 // Валидатор удален или возвращает null, поэтому ругаться не будет
               ),
+              if (_barcodeController.text.trim().isNotEmpty) ...[
+                const SizedBox(height: 10),
+                _BarcodePreviewCard(data: _barcodeController.text.trim()),
+              ],
               const SizedBox(height: 12),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
