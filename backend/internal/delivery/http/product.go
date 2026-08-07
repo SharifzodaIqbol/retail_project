@@ -420,6 +420,11 @@ func (h *Handler) createProduct(c *gin.Context) {
 	p.ShopID = c.MustGet("shop_id").(int)
 	productID, err := h.productRepo.Create(context.Background(), p)
 	if err != nil {
+		if isUniqueViolation(err) {
+			logWarn(c, "Создание товара: штрихкод уже занят", "company_id", p.CompanyID, "barcode", p.Barcode)
+			c.JSON(409, gin.H{"error": "Ин штрихкод аллакай истифода шудааст. Рамзи дигар созед"})
+			return
+		}
 		logErr(c, err, "Ошибка создания товара", "company_id", p.CompanyID, "barcode", p.Barcode)
 		c.JSON(500, gin.H{"error": "Ошибка создания товара"})
 		return

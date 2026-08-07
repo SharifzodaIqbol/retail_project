@@ -125,15 +125,21 @@ func (r *ProductRepository) GetByUnitBarcode(ctx context.Context, companyID, sho
 	return &p, nil
 }
 
-// BarcodeExists — проверяет, занят ли штрихкод в рамках компании. Уникальный
-// индекс в БД — (company_id, barcode), поэтому проверяем именно так же, а
-// не по одному магазину: иначе можно было бы случайно сгенерировать код,
-// который тут же столкнётся с constraint при INSERT в другом магазине той
-// же компании.
+// BarcodeExists — проверяет, занят ли штрихкод в рамках компании. Смотрим
+// СРАЗУ в обеих таблицах: products.barcode и product_units.barcode — это
+// два отдельных уникальных индекса, и код, свободный в products, вполне
+// может быть уже занят чьей-то доп. единицей продажи (упаковкой другого
+// товара). Раньше проверялся только products — из-за этого generateBarcode
+// мог честно отдать код, который тут же падал с ошибкой уникальности при
+// сохранении доп. единицы.
 func (r *ProductRepository) BarcodeExists(ctx context.Context, companyID int, barcode string) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM products WHERE company_id = $1 AND barcode = $2)`,
+		`SELECT EXISTS(
+			SELECT 1 FROM products WHERE company_id = $1 AND barcode = $2
+			UNION ALL
+			SELECT 1 FROM product_units WHERE company_id = $1 AND barcode = $2
+		)`,
 		companyID, barcode,
 	).Scan(&exists)
 	if err != nil {
