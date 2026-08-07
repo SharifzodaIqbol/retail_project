@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"retail-managment-system/internal/domain"
 	"retail-managment-system/internal/repository"
@@ -42,8 +43,24 @@ func (h *Handler) createProductUnit(c *gin.Context) {
 		req.Barcode = nil
 	}
 
+	count, err := h.productUnitRepo.CountExtraUnits(context.Background(), companyID, productID)
+	if err != nil {
+		logErr(c, err, "Создание единицы продажи: ошибка подсчёта существующих единиц", "product_id", productID)
+		c.JSON(500, gin.H{"error": "Ошибка создания единицы продажи"})
+		return
+	}
+	if count >= domain.MaxExtraUnitsPerProduct {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("Ҳадди аксар %d воҳиди иловагӣ барои як маҳсулот иҷозат дода мешавад", domain.MaxExtraUnitsPerProduct)})
+		return
+	}
+
 	unit, err := h.productUnitRepo.Create(context.Background(), companyID, productID, req)
 	if err != nil {
+		if isUniqueViolation(err) {
+			logWarn(c, "Создание единицы продажи: штрихкод уже занят", "product_id", productID)
+			c.JSON(409, gin.H{"error": "Ин штрихкод аллакай истифода шудааст. Рамзи дигар созед"})
+			return
+		}
 		logErr(c, err, "Ошибка создания единицы продажи", "product_id", productID)
 		c.JSON(500, gin.H{"error": "Ошибка создания единицы продажи. Проверьте, не занят ли штрихкод"})
 		return

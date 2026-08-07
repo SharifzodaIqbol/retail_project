@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"retail-managment-system/internal/domain"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -332,6 +333,46 @@ func (r *ProductRepository) UpsertFromImport(ctx context.Context, p domain.Produ
 	)
 	if err != nil {
 		return false, err
+	}
+
+	// Проверяем лимит ДО вставки: у товара уже могло быть до
+	// domain.MaxExtraUnitsPerProduct доп. единиц (заведённых вручную через
+	// приложение), и импорт с новыми названиями единиц (не совпадающими с
+	// уже существующими по label) не должен пробить общий лимит — та же
+	// защита, что и в createProductUnit, но здесь речь о ПОВТОРНОМ импорте
+	// уже существующего товара, а не о первом создании.
+	existingLabels := make(map[string]bool)
+	rows, err := tx.Query(ctx, `
+		SELECT label FROM product_units
+		WHERE company_id = $1 AND product_id = $2 AND is_base = false AND is_active = true`,
+		p.CompanyID, productID,
+	)
+	if err != nil {
+		return false, err
+	}
+	for rows.Next() {
+		var label string
+		if err := rows.Scan(&label); err != nil {
+			rows.Close()
+			return false, err
+		}
+		existingLabels[label] = true
+	}
+	rows.Close()
+
+	existingCount := len(existingLabels)
+	totalAfter := existingCount
+	for _, u := range extraUnits {
+		if !existingLabels[u.Label] {
+			existingLabels[u.Label] = true
+			totalAfter++
+		}
+	}
+	if totalAfter > domain.MaxExtraUnitsPerProduct {
+		return false, fmt.Errorf(
+			"маҳсулот аллакай %d воҳиди иловагӣ дорад, ҳадди аксар %d иҷозат дода мешавад",
+			existingCount, domain.MaxExtraUnitsPerProduct,
+		)
 	}
 
 	// Дополнительные единицы продажи из этой же строки (упаковка/блок/...).

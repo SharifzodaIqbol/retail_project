@@ -87,7 +87,11 @@ func parseImportFloat(raw string) (float64, error) {
 //	[9] barcode            — необязательно, может быть пустым
 //
 // Далее группы по 4 колонки могут повторяться (10-13, 14-17...) для
-// описания ещё одной единицы продажи того же товара в этой же строке.
+// описания ещё одной единицы продажи того же товара в этой же строке —
+// но не больше maxExtraUnitsPerProduct штук (см. product_unit.go): это тот
+// же лимит, что действует в форме приложения и при ручном добавлении через
+// API, поэтому файл с лишними группами не должен создавать больше единиц,
+// чем позволено в остальных местах.
 func parseExtraUnitColumns(row []string) ([]domain.CreateProductUnitRequest, error) {
 	var units []domain.CreateProductUnitRequest
 	const groupStart = 6
@@ -106,6 +110,9 @@ func parseExtraUnitColumns(row []string) ([]domain.CreateProductUnitRequest, err
 			// Пустая группа колонок — просто нет ещё одной единицы продажи
 			// в этой строке, это нормально, а не ошибка.
 			continue
+		}
+		if len(units) >= domain.MaxExtraUnitsPerProduct {
+			return nil, fmt.Errorf("дар як сатр аз %d воҳиди иловагӣ зиёд буда наметавонад", domain.MaxExtraUnitsPerProduct)
 		}
 		factor, err := parseImportFloat(get(1))
 		if err != nil || factor <= 0 {
@@ -208,13 +215,35 @@ func (h *Handler) importProducts(c *gin.Context) {
 		}
 
 		name := strings.TrimSpace(get(0))
-		barcode := strings.TrimSpace(get(1))
+		barcodeRaw := strings.TrimSpace(get(1))
 
 		if name == "" {
 			result.Errors = append(result.Errors, domain.ProductImportError{
 				Row: rowNum, Message: "Ячейкаи 'Ном' холи аст, номи махсулотро нависед",
 			})
 			continue
+		}
+
+		// Пустая колонка "Штрихкод" — не ошибка, но и не значит "оставить
+		// пустым": раньше сюда попадал указатель на "" (не nil), а
+		// ON CONFLICT (company_id, shop_id, barcode) матчит "" как обычное
+		// значение — второй и последующий безштрихкодовый товар в файле
+		// тихо перезаписывал предыдущий. Поэтому для таких строк сами
+		// подбираем свободный внутренний штрихкод — тем же способом,
+		// что и кнопка "✨" в форме добавления товара.
+		var barcode string
+		if barcodeRaw == "" {
+			generated, genErr := generateUniqueBarcode(ctx, h.productRepo, companyID)
+			if genErr != nil {
+				logErr(c, genErr, "Импорт товаров: не удалось сгенерировать штрихкод", "row", rowNum)
+				result.Errors = append(result.Errors, domain.ProductImportError{
+					Row: rowNum, Message: "Не удалось сгенерировать штрихкод для товара без него, попробуйте ещё раз",
+				})
+				continue
+			}
+			barcode = generated
+		} else {
+			barcode = barcodeRaw
 		}
 
 		buyPrice, err := parseImportFloat(get(2))
@@ -271,6 +300,29 @@ func (h *Handler) importProducts(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// generateUniqueBarcode — подбирает свежий, ещё никем не занятый в рамках
+// компании внутренний EAN-13 штрихкод (см. domain.GenerateInternalEAN13).
+// Общая логика для ручной генерации (кнопка "✨" в форме) и автогенерации
+// при импорте из Excel для строк с пустой колонкой "Штрихкод" — в обоих
+// случаях нужен один и тот же алгоритм подбора и проверки уникальности.
+func generateUniqueBarcode(ctx context.Context, productRepo *repository.ProductRepository, companyID int) (string, error) {
+	const maxAttempts = 10
+	for i := 0; i < maxAttempts; i++ {
+		candidate, err := domain.GenerateInternalEAN13()
+		if err != nil {
+			return "", err
+		}
+		exists, err := productRepo.BarcodeExists(ctx, companyID, candidate)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("не удалось подобрать свободный штрихкод за %d попыток", maxAttempts)
+}
+
 // generateBarcode — GET /api/products/generate-barcode
 // Возвращает свежий, ещё никем не занятый в рамках компании внутренний
 // EAN-13 штрихкод (см. domain.GenerateInternalEAN13). Ничего не сохраняет —
@@ -282,29 +334,13 @@ func (h *Handler) importProducts(c *gin.Context) {
 func (h *Handler) generateBarcode(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 
-	const maxAttempts = 10
-	for i := 0; i < maxAttempts; i++ {
-		candidate, err := domain.GenerateInternalEAN13()
-		if err != nil {
-			logErr(c, err, "Генерация штрихкода: ошибка генератора")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось сгенерировать штрихкод"})
-			return
-		}
-		exists, err := h.productRepo.BarcodeExists(context.Background(), companyID, candidate)
-		if err != nil {
-			logErr(c, err, "Генерация штрихкода: ошибка проверки уникальности", "company_id", companyID)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось сгенерировать штрихкод"})
-			return
-		}
-		if !exists {
-			c.JSON(http.StatusOK, gin.H{"barcode": candidate})
-			return
-		}
+	candidate, err := generateUniqueBarcode(context.Background(), h.productRepo, companyID)
+	if err != nil {
+		logErr(c, err, "Генерация штрихкода: не удалось подобрать свободный код", "company_id", companyID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось подобрать свободный штрихкод, попробуйте ещё раз"})
+		return
 	}
-	// Крайне маловероятно (10 подряд случайных 10-значных коллизий), но
-	// честно сообщаем об этом, а не отдаём заведомо занятый код.
-	logWarn(c, "Генерация штрихкода: не удалось подобрать свободный код", "company_id", companyID, "attempts", maxAttempts)
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось подобрать свободный штрихкод, попробуйте ещё раз"})
+	c.JSON(http.StatusOK, gin.H{"barcode": candidate})
 }
 
 func (h *Handler) getProductByBarcode(c *gin.Context) {

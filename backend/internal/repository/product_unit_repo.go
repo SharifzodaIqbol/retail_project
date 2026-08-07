@@ -62,6 +62,23 @@ func (r *ProductUnitRepository) GetByID(ctx context.Context, companyID, unitID i
 	return &u, nil
 }
 
+// CountExtraUnits — сколько активных ДОПОЛНИТЕЛЬНЫХ (не базовых) единиц
+// продажи уже заведено у товара. Используется, чтобы не дать превысить
+// лимит доп. единиц (упаковка/блок/коробка...) — как при ручном добавлении
+// через API, так и при импорте из Excel.
+func (r *ProductUnitRepository) CountExtraUnits(ctx context.Context, companyID, productID int) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM product_units
+		WHERE company_id = $1 AND product_id = $2 AND is_base = false AND is_active = true`,
+		companyID, productID,
+	).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (r *ProductUnitRepository) Create(ctx context.Context, companyID, productID int, req domain.CreateProductUnitRequest) (domain.ProductUnit, error) {
 	var u domain.ProductUnit
 	err := r.db.QueryRow(ctx, `
