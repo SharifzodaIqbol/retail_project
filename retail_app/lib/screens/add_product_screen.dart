@@ -6,14 +6,50 @@ import 'package:retail_app/widgets/barcode_scanner.dart';
 
 /// Карточка одной доп. единицы продажи в форме добавления товара:
 /// название ("упаковка"), сколько штук внутри, и НЕЗАВИСИМАЯ цена за неё.
-class _ExtraUnitCard extends StatelessWidget {
+class _ExtraUnitCard extends StatefulWidget {
   final _ExtraUnitRow row;
   final VoidCallback onRemove;
+  final VoidCallback onChanged;
+  final Future<String?> Function() onGenerateBarcode;
 
-  const _ExtraUnitCard({required this.row, required this.onRemove});
+  const _ExtraUnitCard({
+    required this.row,
+    required this.onRemove,
+    required this.onChanged,
+    required this.onGenerateBarcode,
+  });
+
+  @override
+  State<_ExtraUnitCard> createState() => _ExtraUnitCardState();
+}
+
+class _ExtraUnitCardState extends State<_ExtraUnitCard> {
+  // Свой индикатор загрузки на каждую карточку — чтобы генерация
+  // штрихкода для одной доп. единицы не блокировала кнопки у остальных.
+  bool _generating = false;
+
+  Future<void> _generateBarcode() async {
+    setState(() => _generating = true);
+    final barcode = await widget.onGenerateBarcode();
+    if (!mounted) return;
+    setState(() => _generating = false);
+
+    if (barcode == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Штрихкодро сохта натавонистем. Пайвастшавиро санҷед.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    widget.row.barcodeController.text = barcode;
+    widget.onChanged();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final row = widget.row;
     return Card(
       margin: const EdgeInsets.only(top: 10),
       child: Padding(
@@ -33,7 +69,7 @@ class _ExtraUnitCard extends StatelessWidget {
                 ),
                 IconButton(
                   icon: const Icon(Icons.delete_outline, color: Colors.red),
-                  onPressed: onRemove,
+                  onPressed: widget.onRemove,
                 ),
               ],
             ),
@@ -69,10 +105,57 @@ class _ExtraUnitCard extends StatelessWidget {
             const SizedBox(height: 8),
             TextField(
               controller: row.barcodeController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Штрихкоди ин воҳид (ихтиёрӣ)',
+                prefixIcon: const Icon(Icons.qr_code),
+                suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _generating
+                        ? const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : IconButton(
+                            tooltip: 'Штрихкоди худкор созед',
+                            icon: const Icon(
+                              Icons.auto_awesome,
+                              color: Colors.blue,
+                            ),
+                            onPressed: _generateBarcode,
+                          ),
+                    IconButton(
+                      tooltip: 'Бо камера сканер кунед',
+                      icon: const Icon(Icons.camera_alt, color: Colors.blue),
+                      onPressed: () async {
+                        final String? scannedCode = await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => BarcodeScannerWidget(),
+                          ),
+                        );
+                        if (scannedCode != null) {
+                          row.barcodeController.text = scannedCode;
+                          widget.onChanged();
+                        }
+                      },
+                    ),
+                  ],
+                ),
               ),
+              // Перерисовываем карточку при вводе, чтобы превью снизу
+              // появлялось/исчезало и обновлялось само — так же, как это
+              // уже работает для основного штрихкода товара.
+              onChanged: (_) => widget.onChanged(),
             ),
+            if (row.barcodeController.text.trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _BarcodePreviewCard(data: row.barcodeController.text.trim()),
+            ],
           ],
         ),
       ),
@@ -91,6 +174,12 @@ class _BarcodePreviewCard extends StatelessWidget {
 
   const _BarcodePreviewCard({required this.data});
 
+  // Фиксированная ширина превью, одинаковая на телефоне, ноуте и вебе.
+  // Без явного width BarcodeWidget растягивается на всю ширину родителя,
+  // а на широких экранах (десктоп/веб) это даёт нечитаемый, "размазанный"
+  // штрихкод с огромными промежутками между штрихами.
+  static const double _previewWidth = 260;
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -99,15 +188,20 @@ class _BarcodePreviewCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         child: Column(
           children: [
-            BarcodeWidget(
-              barcode: Barcode.code128(),
-              data: data,
-              height: 64,
-              drawText: true,
-              style: const TextStyle(fontSize: 12),
-              errorBuilder: (context, error) => Text(
-                'Ин рамз барои штрихкод мувофиқ нест',
-                style: TextStyle(color: Colors.red.shade700, fontSize: 12),
+            Center(
+              child: SizedBox(
+                width: _previewWidth,
+                height: 90,
+                child: BarcodeWidget(
+                  barcode: Barcode.code128(),
+                  data: data,
+                  drawText: true,
+                  style: const TextStyle(fontSize: 12),
+                  errorBuilder: (context, error) => Text(
+                    'Ин рамз барои штрихкод мувофиқ нест',
+                    style: TextStyle(color: Colors.red.shade700, fontSize: 12),
+                  ),
+                ),
               ),
             ),
           ],
@@ -155,6 +249,12 @@ class _AddProductScreenState extends State<AddProductScreen> {
   // Доп. единицы продажи (упаковка и т.п.), заводимые вместе с товаром.
   final List<_ExtraUnitRow> _extraUnits = [];
 
+  // Больше 4 доп. единиц продавцу практически никогда не нужно (штука +
+  // упаковка + блок + коробка), а бесконечный список ломает форму и
+  // усложняет сохранение/печать штрихкодов. Кнопка "Илова кардан"
+  // скрывается по достижении лимита.
+  static const int _maxExtraUnits = 4;
+
   // true, пока идёт запрос свободного штрихкода на сервер — блокирует кнопку
   // "Сохтан" (сгенерировать), чтобы продавец не наплодил параллельных
   // запросов повторными тапами.
@@ -194,6 +294,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
   }
 
   void _addExtraUnitRow() {
+    if (_extraUnits.length >= _maxExtraUnits) return;
     setState(() => _extraUnits.add(_ExtraUnitRow()));
   }
 
@@ -552,22 +653,28 @@ class _AddProductScreenState extends State<AddProductScreen> {
                     style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                   TextButton.icon(
-                    onPressed: _addExtraUnitRow,
+                    onPressed: _extraUnits.length >= _maxExtraUnits
+                        ? null
+                        : _addExtraUnitRow,
                     icon: const Icon(Icons.add),
                     label: const Text('Илова кардан'),
                   ),
                 ],
               ),
-              const Text(
-                'Ихтиёрӣ: агар маҳсулот ҳам донагӣ, ҳам қуттигӣ фурӯхта шавад — '
-                'нархи қуттиро мустақилона нависед (на ба таври автоматӣ '
-                'ҳисобшуда аз нархи як дона).',
+              Text(
+                _extraUnits.length >= _maxExtraUnits
+                    ? 'Ҳадди аксар $_maxExtraUnits воҳиди иловагӣ барои як маҳсулот.'
+                    : 'Ихтиёрӣ: агар маҳсулот ҳам донагӣ, ҳам қуттигӣ фурӯхта шавад — '
+                          'нархи қуттиро мустақилона нависед (на ба таври автоматӣ '
+                          'ҳисобшуда аз нархи як дона).',
                 style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
               for (int i = 0; i < _extraUnits.length; i++)
                 _ExtraUnitCard(
                   row: _extraUnits[i],
                   onRemove: () => _removeExtraUnitRow(i),
+                  onChanged: () => setState(() {}),
+                  onGenerateBarcode: _apiService.generateBarcode,
                 ),
               const SizedBox(height: 30),
               ElevatedButton(
