@@ -539,14 +539,14 @@ func (h *Handler) deleteProduct(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 	shopID := c.MustGet("shop_id").(int)
 	id, _ := strconv.Atoi(c.Param("id"))
-	if err := h.productRepo.SoftDelete(context.Background(), id, companyID, shopID); err != nil {
+	if err := h.productRepo.Delete(context.Background(), id, companyID, shopID); err != nil {
 		if err == repository.ErrNotFound {
 			logWarn(c, "Удаление товара: товар не найден", "product_id", id, "company_id", companyID)
 			c.JSON(404, gin.H{"error": "Товар не найден"})
 			return
 		}
 		logErr(c, err, "Ошибка удаления товара", "product_id", id, "company_id", companyID)
-		c.JSON(500, gin.H{"error": "Ошибка удаления"})
+		c.JSON(500, gin.H{"errorS": "Ошибка удаления"})
 		return
 	}
 	c.JSON(200, gin.H{"status": "ok"})

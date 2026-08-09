@@ -261,8 +261,8 @@ func (r *ProductRepository) UpdateInventory(ctx context.Context, id int, company
 	return ErrInsufficientStock
 }
 
-func (r *ProductRepository) SoftDelete(ctx context.Context, id int, companyID, shopID int) error {
-	tag, err := r.db.Exec(ctx, "UPDATE products SET is_active = false WHERE id = $1 AND company_id = $2 AND shop_id = $3", id, companyID, shopID)
+func (r *ProductRepository) Delete(ctx context.Context, id int, companyID, shopID int) error {
+	tag, err := r.db.Exec(ctx, "DELETE FROM products WHERE id = $1 AND company_id = $2 AND shop_id = $3", id, companyID, shopID)
 	if err != nil {
 		return err
 	}
