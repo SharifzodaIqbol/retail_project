@@ -85,9 +85,9 @@ type ProductImportError struct {
 // фронтенда (иначе несогласованное округление на разных платформах могло
 // бы тихо разъехаться со складом).
 type SaleItem struct {
-	SaleID      int     `json:"sale_id"`
-	ProductID   int     `json:"product_id"`
-	UnitID      int     `json:"unit_id" binding:"required"`
+	SaleID    int `json:"sale_id"`
+	ProductID int `json:"product_id"`
+	UnitID    int `json:"unit_id" binding:"required"`
 	// QuantityDisplay — что выбрал кассир в единицах продажи ("1 упаковка").
 	// Для чека/UI. НИКОГДА не используется для списания склада напрямую.
 	QuantityDisplay float64 `json:"quantity_display" binding:"required,gt=0"`
@@ -96,6 +96,14 @@ type SaleItem struct {
 	// прислано клиентом (см. SaleRepository.ExecuteSale).
 	QuantityBase float64 `json:"quantity_base"`
 	PriceAtSale  float64 `json:"price"`
+	// BuyPriceAtSale — закупочная цена товара НА МОМЕНТ этой продажи.
+	// Заполняется сервером внутри ExecuteSale (снимок текущей
+	// products.buy_price в момент чека), клиент это поле не присылает и
+	// не может повлиять на него. Без этого снимка вся историческая
+	// прибыль пересчитывалась бы задним числом при каждом изменении
+	// закупочной цены товара (правка карточки, переимпорт из Excel) —
+	// именно так аналитика "расходилась с реальной прибылью".
+	BuyPriceAtSale float64 `json:"-"`
 }
 
 type Sale struct {

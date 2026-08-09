@@ -60,15 +60,13 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID, shopID int,
 
 		quantityBase := item.QuantityDisplay * conversionFactor
 
-		_, err = tx.Exec(ctx, `INSERT INTO sale_items 
-						   (sale_id, company_id, product_id, unit_id, quantity_base, quantity_display, price_at_sale) 
-						   VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			saleID, companyID, item.ProductID, item.UnitID, quantityBase, item.QuantityDisplay, item.PriceAtSale)
-		if err != nil {
-			return 0, err
-		}
-
+		// Списание склада ДО вставки строки чека: нужно знать buy_price
+		// именно в момент этой продажи (снимок для profit-аналитики,
+		// см. buy_price_at_sale), а заодно тем же запросом проверяем остаток
+		// — если товара не хватает, вставлять sale_items вообще не нужно, транзакция
+		// откатится целиком.
 		var p domain.Product
+		var buyPriceAtSale float64
 		// company_id/shop_id — не даём списать склад товара, принадлежащего другому магазину.
 		// Списание идёт по quantityBase (базовые единицы), НЕ по числу, которое
 		// ввёл кассир (quantity_display) — так продажа упаковками не занижает
@@ -76,11 +74,19 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID, shopID int,
 		err = tx.QueryRow(ctx, `UPDATE products 
 								SET stock = stock - $1 
 								WHERE id = $2 AND company_id = $3 AND shop_id = $4 AND stock >= $1 
-								RETURNING name, stock`,
-			quantityBase, item.ProductID, companyID, shopID).Scan(&p.Name, &p.Stock)
+								RETURNING name, stock, buy_price`,
+			quantityBase, item.ProductID, companyID, shopID).Scan(&p.Name, &p.Stock, &buyPriceAtSale)
 
 		if err != nil {
 			return 0, fmt.Errorf("Норасоии махсулот: %s", p.Name)
+		}
+
+		_, err = tx.Exec(ctx, `INSERT INTO sale_items 
+						   (sale_id, company_id, product_id, unit_id, quantity_base, quantity_display, price_at_sale, buy_price_at_sale) 
+						   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			saleID, companyID, item.ProductID, item.UnitID, quantityBase, item.QuantityDisplay, item.PriceAtSale, buyPriceAtSale)
+		if err != nil {
+			return 0, err
 		}
 	}
 	return saleID, tx.Commit(ctx)
@@ -236,9 +242,8 @@ func (r *SaleRepository) GetDailyNetProfit(ctx context.Context, companyID int) (
 	var profit float64
 	query := `
         SELECT 
-            COALESCE(SUM(si.quantity_base * (si.price_at_sale - p.buy_price)), 0)
+            COALESCE(SUM(si.quantity_base * (si.price_at_sale - si.buy_price_at_sale)), 0)
         FROM sale_items si
-        JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
         WHERE s.is_canceled = false 
           AND s.created_at >= CURRENT_DATE
@@ -255,12 +260,11 @@ func (r *SaleRepository) GetPeriodSummary(ctx context.Context, companyID, shopID
 	query := `
 		SELECT 
 			COALESCE(SUM(s.total_amount), 0) as revenue,
-			COALESCE(SUM(si.quantity_base * (si.price_at_sale - p.buy_price)), 0) as profit,
+			COALESCE(SUM(si.quantity_base * (si.price_at_sale - si.buy_price_at_sale)), 0) as profit,
 			COUNT(DISTINCT s.id) as sales_count,
 			COALESCE(AVG(s.total_amount), 0) as avg_check
 		FROM sales s
 		LEFT JOIN sale_items si ON s.id = si.sale_id
-		LEFT JOIN products p ON si.product_id = p.id
 		WHERE s.is_canceled = false AND s.company_id = $1 AND s.shop_id = $2
 		  AND s.created_at >= $3 AND s.created_at < $4`
 
@@ -277,7 +281,7 @@ func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, companyID, 
             p.name, 
             SUM(si.quantity_base) as total_qty,
             SUM(si.quantity_base * si.price_at_sale) as total_revenue,
-            SUM(si.quantity_base * (si.price_at_sale - p.buy_price)) as total_profit
+            SUM(si.quantity_base * (si.price_at_sale - si.buy_price_at_sale)) as total_profit
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
@@ -323,9 +327,8 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, companyID, shopID in
         LEFT JOIN (
             SELECT 
                 si.sale_id,
-                SUM(si.quantity_base * (si.price_at_sale - p.buy_price)) as profit_per_sale
+                SUM(si.quantity_base * (si.price_at_sale - si.buy_price_at_sale)) as profit_per_sale
             FROM sale_items si
-            JOIN products p ON si.product_id = p.id
             GROUP BY si.sale_id
         ) i ON s.id = i.sale_id
         WHERE s.is_canceled = false AND s.company_id = $2 AND s.shop_id = $3
