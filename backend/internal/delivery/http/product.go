@@ -362,7 +362,22 @@ func (h *Handler) getProductByBarcode(c *gin.Context) {
 		}
 	}
 
+	// attachUnits при сбое БД молча логирует ошибку и не трогает p.Units —
+	// для списка товаров (searchProducts) это осознанный компромисс (не
+	// ронять весь поиск из-за одного товара), но здесь, для ОДНОГО
+	// конкретного товара по штрихкоду, пустой units — не "у товара нет
+	// единиц" (базовая единица создаётся вместе с товаром и существует
+	// ВСЕГДА), а признак того, что подгрузка реально упала. Раньше в этом
+	// случае клиент получал 200 OK с units: [] и тихо создавал у себя
+	// синтетическую единицу с id = 0, которая проходила в корзину
+	// незамеченной и валила уже весь чек на оплате — с непонятной
+	// причиной для кассира. Явно фейлим здесь и сразу, в момент сканирования.
 	h.attachUnits(c, companyID, []domain.Product{*p})
+	if len(p.Units) == 0 {
+		logErr(c, fmt.Errorf("units не подгрузились"), "Товар по штрихкоду: единицы продажи не загрузились", "company_id", companyID, "product_id", p.ID, "barcode", barcode)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Хатогӣ ҳангоми боргирии маълумоти воҳиди фурӯш. Бори дигар скан кунед"})
+		return
+	}
 	c.JSON(http.StatusOK, p)
 }
 
@@ -546,7 +561,7 @@ func (h *Handler) deleteProduct(c *gin.Context) {
 			return
 		}
 		logErr(c, err, "Ошибка удаления товара", "product_id", id, "company_id", companyID)
-		c.JSON(500, gin.H{"errorS": "Ошибка удаления"})
+		c.JSON(500, gin.H{"error": "Ошибка удаления"})
 		return
 	}
 	c.JSON(200, gin.H{"status": "ok"})
