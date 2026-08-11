@@ -189,6 +189,27 @@ func (h *Handler) importProducts(c *gin.Context) {
 	result := domain.ProductImportResult{}
 	ctx := context.Background()
 
+	// Загружаем ОДИН раз всё, что нужно для матчинга и генерации штрихкодов
+	// (см. LoadImportContext) — вместо запроса в БД на каждую строку файла.
+	impCtx, err := h.productRepo.LoadImportContext(ctx, companyID, shopID)
+	if err != nil {
+		logErr(c, err, "Импорт товаров: не удалось загрузить контекст импорта")
+		c.JSON(500, gin.H{"error": "Не удалось подготовить импорт"})
+		return
+	}
+
+	// Одна транзакция на ВЕСЬ файл (а не на строку) — резко сокращает число
+	// round-trip'ов к БД на больших файлах. Каждая строка при этом
+	// обрабатывается во вложенной транзакции (SAVEPOINT): если конкретная
+	// строка падает с ошибкой, откатывается только она, а не весь импорт.
+	tx, err := h.productRepo.BeginTx(ctx)
+	if err != nil {
+		logErr(c, err, "Импорт товаров: не удалось начать транзакцию")
+		c.JSON(500, gin.H{"error": "Не удалось начать импорт"})
+		return
+	}
+	defer tx.Rollback(ctx)
+
 	for i, row := range rows {
 		rowNum := i + 1
 		if i == 0 {
@@ -224,24 +245,32 @@ func (h *Handler) importProducts(c *gin.Context) {
 			continue
 		}
 
-		// Пустая колонка "Штрихкод" — не ошибка, но и не значит "оставить
-		// пустым": раньше сюда попадал указатель на "" (не nil), а
-		// ON CONFLICT (company_id, shop_id, barcode) матчит "" как обычное
-		// значение — второй и последующий безштрихкодовый товар в файле
-		// тихо перезаписывал предыдущий. Поэтому для таких строк сами
-		// подбираем свободный внутренний штрихкод — тем же способом,
-		// что и кнопка "✨" в форме добавления товара.
+		// Пустая колонка "Штрихкод" — не ошибка, но и не значит "новый
+		// товар без штрихкода": раньше для КАЖДОЙ такой строки при КАЖДОЙ
+		// загрузке генерировался новый случайный штрихкод, из-за чего
+		// повторный импорт того же файла плодил дубликаты (у товара нет
+		// штрихкода — значит нет и стабильного ключа для ON CONFLICT).
+		// Теперь сначала ищем среди уже существующих товаров этого
+		// магазина товар с таким же названием (см. LoadImportContext) —
+		// если находим, используем его текущий штрихкод, то есть строка
+		// обновляет существующий товар, а не создаёт новый. И только если
+		// такого товара ещё нет — подбираем свободный внутренний штрихкод
+		// (тем же способом, что и кнопка "✨" в форме добавления товара).
 		var barcode string
 		if barcodeRaw == "" {
-			generated, genErr := generateUniqueBarcode(ctx, h.productRepo, companyID)
-			if genErr != nil {
-				logErr(c, genErr, "Импорт товаров: не удалось сгенерировать штрихкод", "row", rowNum)
-				result.Errors = append(result.Errors, domain.ProductImportError{
-					Row: rowNum, Message: "Не удалось сгенерировать штрихкод для товара без него, попробуйте ещё раз",
-				})
-				continue
+			if existing, ok := impCtx.NameToBarcode[domain.NormalizeImportName(name)]; ok {
+				barcode = existing
+			} else {
+				generated, genErr := generateUniqueBarcodeInMemory(impCtx)
+				if genErr != nil {
+					logErr(c, genErr, "Импорт товаров: не удалось сгенерировать штрихкод", "row", rowNum)
+					result.Errors = append(result.Errors, domain.ProductImportError{
+						Row: rowNum, Message: "Не удалось сгенерировать штрихкод для товара без него, попробуйте ещё раз",
+					})
+					continue
+				}
+				barcode = generated
 			}
-			barcode = generated
 		} else {
 			barcode = barcodeRaw
 		}
@@ -284,12 +313,30 @@ func (h *Handler) importProducts(c *gin.Context) {
 			continue
 		}
 
-		created, err := h.productRepo.UpsertFromImport(ctx, p, extraUnits)
+		// Вложенная транзакция (SAVEPOINT) на строку: если эта строка
+		// упадёт по ограничению БД, откатывается только она — остальные
+		// строки файла продолжают обрабатываться в той же внешней
+		// транзакции.
+		rowTx, err := tx.Begin(ctx)
 		if err != nil {
+			logErr(c, err, "Импорт товаров: не удалось открыть savepoint", "row", rowNum)
+			result.Errors = append(result.Errors, domain.ProductImportError{Row: rowNum, Message: "Внутренняя ошибка сохранения строки"})
+			continue
+		}
+
+		created, err := h.productRepo.UpsertFromImportRow(ctx, rowTx, p, extraUnits, impCtx)
+		if err != nil {
+			rowTx.Rollback(ctx)
 			logErr(c, err, "Импорт товаров: ошибка сохранения строки", "row", rowNum, "barcode", barcode)
 			result.Errors = append(result.Errors, domain.ProductImportError{Row: rowNum, Message: "Ошибка сохранения товара: " + err.Error()})
 			continue
 		}
+		if err := rowTx.Commit(ctx); err != nil {
+			logErr(c, err, "Импорт товаров: не удалось зафиксировать строку", "row", rowNum)
+			result.Errors = append(result.Errors, domain.ProductImportError{Row: rowNum, Message: "Ошибка сохранения товара: " + err.Error()})
+			continue
+		}
+
 		if created {
 			result.Created++
 		} else {
@@ -297,14 +344,20 @@ func (h *Handler) importProducts(c *gin.Context) {
 		}
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		logErr(c, err, "Импорт товаров: не удалось зафиксировать транзакцию импорта")
+		c.JSON(500, gin.H{"error": "Не удалось сохранить результаты импорта"})
+		return
+	}
+
 	c.JSON(http.StatusOK, result)
 }
 
 // generateUniqueBarcode — подбирает свежий, ещё никем не занятый в рамках
-// компании внутренний EAN-13 штрихкод (см. domain.GenerateInternalEAN13).
-// Общая логика для ручной генерации (кнопка "✨" в форме) и автогенерации
-// при импорте из Excel для строк с пустой колонкой "Штрихкод" — в обоих
-// случаях нужен один и тот же алгоритм подбора и проверки уникальности.
+// компании внутренний EAN-13 штрихкод (см. domain.GenerateInternalEAN13),
+// проверяя уникальность запросом к БД. Используется для ручной генерации
+// (кнопка "✨" в форме добавления товара), где это разовый запрос и поход
+// в БД не создаёт проблем с производительностью.
 func generateUniqueBarcode(ctx context.Context, productRepo *repository.ProductRepository, companyID int) (string, error) {
 	const maxAttempts = 10
 	for i := 0; i < maxAttempts; i++ {
@@ -317,6 +370,27 @@ func generateUniqueBarcode(ctx context.Context, productRepo *repository.ProductR
 			return "", err
 		}
 		if !exists {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("не удалось подобрать свободный штрихкод за %d попыток", maxAttempts)
+}
+
+// generateUniqueBarcodeInMemory — та же генерация, что и generateUniqueBarcode,
+// но проверка уникальности идёт по уже загруженному в память набору занятых
+// штрихкодов (impCtx.Barcodes, см. LoadImportContext), без похода в БД на
+// каждую попытку. Используется при импорте из Excel, где на строку без
+// штрихкода запрос к БД на каждую попытку подбора кода — заметная часть
+// общей медлительности загрузки большого файла.
+func generateUniqueBarcodeInMemory(impCtx *domain.ImportContext) (string, error) {
+	const maxAttempts = 10
+	for i := 0; i < maxAttempts; i++ {
+		candidate, err := domain.GenerateInternalEAN13()
+		if err != nil {
+			return "", err
+		}
+		if !impCtx.Barcodes[candidate] {
+			impCtx.Barcodes[candidate] = true
 			return candidate, nil
 		}
 	}

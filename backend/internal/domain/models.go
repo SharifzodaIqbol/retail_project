@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Company struct {
 	ID          int       `json:"id"`
@@ -72,6 +75,33 @@ type ProductImportResult struct {
 type ProductImportError struct {
 	Row     int    `json:"row"`
 	Message string `json:"message"`
+}
+
+// ImportContext — состояние, подгружаемое ОДИН раз перед обработкой всего
+// файла импорта (а не на каждую строку), чтобы избежать N+1 запросов к БД:
+//
+//   - Barcodes    — все штрихкоды компании (products + product_units),
+//     используется для подбора свободного сгенерированного штрихкода
+//     в памяти, без похода в БД на каждую попытку.
+//   - NameToBarcode — имя товара (нормализовано: TrimSpace+ToLower) -> его
+//     текущий штрихкод, в рамках конкретного магазина. Нужен, чтобы при
+//     повторном импорте строки БЕЗ штрихкода находить уже существующий
+//     товар по названию вместо генерации нового штрихкода (что раньше
+//     приводило к дублированию товаров без штрихкода при повторной
+//     загрузке одного и того же файла).
+//   - ProductLabels — штрихкод товара -> набор названий уже существующих
+//     у него доп. единиц продажи (упаковка/блок/...). Нужен для проверки
+//     лимита MaxExtraUnitsPerProduct без SELECT на каждую строку.
+type ImportContext struct {
+	Barcodes      map[string]bool
+	NameToBarcode map[string]string
+	ProductLabels map[string]map[string]bool
+}
+
+// NormalizeImportName — единая нормализация имени товара для сопоставления
+// строк импорта с уже существующими товарами (см. ImportContext.NameToBarcode).
+func NormalizeImportName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }
 
 // SaleItem — позиция чека.
