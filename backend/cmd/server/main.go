@@ -11,6 +11,7 @@ import (
 	"retail-managment-system/internal/delivery/telegram"
 	"retail-managment-system/internal/logger"
 	"retail-managment-system/internal/repository"
+	"retail-managment-system/internal/tzutil"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
@@ -60,7 +61,10 @@ func main() {
 func startDailyReportScheduler(saleRepo *repository.SaleRepository, userRepo *repository.UserRepository, tgBot *telegram.Bot, l *slog.Logger) {
 	l.Info("Планировщик ежедневных отчётов запущен")
 	for {
-		now := time.Now()
+		// Отчёт должен уходить в 21:00 по местному времени Таджикистана
+		// (UTC+5), а не по таймзоне сервера — иначе на сервере в UTC
+		// отчёт улетит в 02:00 ночи по Душанбе.
+		now := tzutil.Now()
 		if now.Hour() == 21 && now.Minute() == 0 {
 			owners, err := userRepo.GetAllOwnersWithTelegram(context.Background())
 			if err != nil {

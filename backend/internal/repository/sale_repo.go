@@ -94,12 +94,14 @@ func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID, shopID int,
 
 func (r *SaleRepository) GetTodayTotal(ctx context.Context, companyID int) (domain.DailyStats, error) {
 	var stats domain.DailyStats
+	// "Сегодня" считаем по местному времени Таджикистана (UTC+5), а не по
+	// таймзоне сервера БД — иначе граница суток съезжает на 5 часов.
 	query := `
 		SELECT 
 			COALESCE(SUM(total_amount), 0), 
 			COUNT(id) 
 		FROM sales 
-		WHERE created_at >= CURRENT_DATE 
+		WHERE created_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Dushanbe') AT TIME ZONE 'Asia/Dushanbe')
 		AND is_canceled = false
 		AND company_id = $1`
 
@@ -160,7 +162,7 @@ func (r *SaleRepository) GetAll(ctx context.Context, companyID, shopID int, limi
 
 	query := `
         SELECT s.id, s.seller_id, u.username, s.total_amount, s.is_canceled, s.cancel_reason,
-               TO_CHAR(s.created_at, 'DD.MM.YYYY HH24:MI') as created_at
+               TO_CHAR(s.created_at AT TIME ZONE 'Asia/Dushanbe', 'DD.MM.YYYY HH24:MI') as created_at
         FROM sales s
         LEFT JOIN users u ON s.seller_id = u.id
         WHERE s.company_id = $1 AND s.shop_id = $2
@@ -246,7 +248,7 @@ func (r *SaleRepository) GetDailyNetProfit(ctx context.Context, companyID int) (
         FROM sale_items si
         JOIN sales s ON si.sale_id = s.id
         WHERE s.is_canceled = false 
-          AND s.created_at >= CURRENT_DATE
+          AND s.created_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Dushanbe') AT TIME ZONE 'Asia/Dushanbe')
           AND s.company_id = $1`
 
 	err := r.db.QueryRow(ctx, query, companyID).Scan(&profit)
@@ -309,17 +311,20 @@ func (r *SaleRepository) GetTopProductsDetailed(ctx context.Context, companyID, 
 }
 
 func (r *SaleRepository) GetSalesByDay(ctx context.Context, companyID, shopID int, days int) ([]domain.SaleByDay, error) {
+	// Дни и дата продажи считаются по местному времени Таджикистана (UTC+5),
+	// иначе CURRENT_DATE/::date берут таймзону сервера БД, и границы дней
+	// в графике "по дням" не совпадают с реальными местными сутками.
 	query := `
     WITH daily_series AS (
         SELECT generate_series(
-            CURRENT_DATE - ($1 - 1) * INTERVAL '1 day',
-            CURRENT_DATE,
+            (now() AT TIME ZONE 'Asia/Dushanbe')::date - ($1 - 1) * INTERVAL '1 day',
+            (now() AT TIME ZONE 'Asia/Dushanbe')::date,
             INTERVAL '1 day'
         )::date as day
     ),
     daily_sales AS (
         SELECT 
-            s.created_at::date as sale_date,
+            (s.created_at AT TIME ZONE 'Asia/Dushanbe')::date as sale_date,
             SUM(s.total_amount) as total_revenue,
             COUNT(s.id) as sales_count,
             SUM(i.profit_per_sale) as total_profit
@@ -332,7 +337,7 @@ func (r *SaleRepository) GetSalesByDay(ctx context.Context, companyID, shopID in
             GROUP BY si.sale_id
         ) i ON s.id = i.sale_id
         WHERE s.is_canceled = false AND s.company_id = $2 AND s.shop_id = $3
-        GROUP BY s.created_at::date
+        GROUP BY (s.created_at AT TIME ZONE 'Asia/Dushanbe')::date
     )
     SELECT 
         TO_CHAR(ds.day, 'DD.MM') as date,
