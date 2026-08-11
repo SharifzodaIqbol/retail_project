@@ -29,6 +29,7 @@ class SyncService {
 
   StreamSubscription? _connectivitySub;
   Timer? _fallbackTimer;
+  Timer? _catalogTimer;
   bool _isSyncing = false;
   bool _started = false;
 
@@ -54,11 +55,25 @@ class SyncService {
     _fallbackTimer = Timer.periodic(const Duration(seconds: 45), (_) {
       _syncSalesOnly();
     });
+
+    // Сканирование на кассе теперь в первую очередь читает ЛОКАЛЬНЫЙ
+    // кэш товаров (см. ApiService.getProductByBarcode) — сеть на каждый
+    // скан больше не дёргается, чтобы не ждать round-trip до сервера.
+    // Расплата за это — кэш может отстать от сервера (новая цена,
+    // изменённый остаток, новый товар), если полагаться только на
+    // обновление "при восстановлении связи" (актуально один раз в
+    // начале смены, если продавец весь день не терял сеть). Поэтому
+    // дополнительно обновляем каталог раз в несколько минут прямо во
+    // время смены — тихо, в фоне, не мешая кассиру.
+    _catalogTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      _refreshCatalogOnly();
+    });
   }
 
   void dispose() {
     _connectivitySub?.cancel();
     _fallbackTimer?.cancel();
+    _catalogTimer?.cancel();
     _started = false;
   }
 
@@ -90,6 +105,22 @@ class SyncService {
     _isSyncing = true;
     try {
       await _syncOfflineSales();
+    } finally {
+      _isSyncing = false;
+    }
+  }
+
+  /// Лёгкая периодическая подстраховка для кассового кэша товаров —
+  /// только каталог, без чеков (чеки уже покрыты _syncSalesOnly).
+  /// Использует ту же блокировку [_isSyncing], что и остальная
+  /// синхронизация, поэтому не может наложиться на полный syncNow().
+  Future<void> _refreshCatalogOnly() async {
+    if (_isSyncing) return;
+    if (!ConnectivityService.instance.isOnline) return;
+
+    _isSyncing = true;
+    try {
+      await _api.refreshOfflineCache();
     } finally {
       _isSyncing = false;
     }

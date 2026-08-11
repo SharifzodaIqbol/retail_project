@@ -220,12 +220,22 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
 
+  // Ключ на экран "Касса", чтобы можно было вернуть фокус сканеру штрих-кода,
+  // когда пользователь снова переключается на эту вкладку. HomeScreen сидит
+  // внутри IndexedStack и не пересоздаётся при переключении вкладок, поэтому
+  // сам по себе не узнаёт о том, что снова стал видимым.
+  final GlobalKey<State<HomeScreen>> _homeScreenKey =
+      GlobalKey<State<HomeScreen>>();
+
   List<_NavItem> get _navItems {
     final items = [
       _NavItem(
         icon: Icons.point_of_sale,
         label: 'Касса',
-        screen: HomeScreen(onSellerLogout: widget.onSellerLogout),
+        screen: HomeScreen(
+          key: _homeScreenKey,
+          onSellerLogout: widget.onSellerLogout,
+        ),
       ),
       _NavItem(icon: Icons.history, label: 'Таърих', screen: HistoryScreen()),
       _NavItem(
@@ -270,7 +280,16 @@ class _MainShellState extends State<MainShell> {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
-        onDestinationSelected: (i) => setState(() => _currentIndex = i),
+        onDestinationSelected: (i) {
+          setState(() => _currentIndex = i);
+          // Индекс 0 — вкладка "Касса". Возвращаем фокус сканеру штрих-кода,
+          // как только кадр с уже видимым HomeScreen будет построен.
+          if (i == 0) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              (_homeScreenKey.currentState as dynamic)?.requestScannerFocus();
+            });
+          }
+        },
         backgroundColor: Colors.white,
         elevation: 8,
         destinations: items

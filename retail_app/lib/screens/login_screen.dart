@@ -14,8 +14,16 @@ const _kBg = Color(0xFFF5F7FA);
 class LoginScreen extends StatefulWidget {
   // Добавляем обязательный параметр onLogin, который требует main.dart
   final Function(String role) onLogin;
+  // Необязательное сообщение, которое показывается баннером над формой —
+  // используется, когда на этот экран вернули принудительно (истекла
+  // сессия из-за протухшего JWT-токена, см. ApiService._handleAuthErrors),
+  // а не потому что продавец сам нажал "выйти". Без этого продавец видел
+  // бы просто пустой экран входа и не понимал, почему его вдруг сюда
+  // вернуло посреди работы.
+  final String? sessionMessage;
 
-  const LoginScreen({Key? key, required this.onLogin}) : super(key: key);
+  const LoginScreen({Key? key, required this.onLogin, this.sessionMessage})
+    : super(key: key);
 
   @override
   _LoginScreenState createState() => _LoginScreenState();
@@ -141,6 +149,43 @@ class _LoginScreenState extends State<LoginScreen> {
                                   color: Colors.grey[600],
                                 ),
                               ),
+                              if (widget.sessionMessage != null) ...[
+                                const SizedBox(height: 16),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFFF4E5),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: const Color(0xFFFFD8A8),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.info_outline_rounded,
+                                        color: Color(0xFFB8730A),
+                                        size: 20,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          widget.sessionMessage!,
+                                          style: const TextStyle(
+                                            color: Color(0xFFB8730A),
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                               const SizedBox(height: 28),
 
                               _FieldLabel('Ном'),

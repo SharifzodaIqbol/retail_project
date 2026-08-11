@@ -102,7 +102,34 @@ class ApiService {
     };
   }
 
-  void _checkSubscription(int statusCode) {
+  // Флаг на уровне класса (не инстанса — ApiService создаётся заново на
+  // каждом экране через ApiService(), см. `final _apiService = ApiService();`
+  // по всему коду), чтобы при одновременном 401 сразу с нескольких
+  // параллельных запросов (например, фоновая синхронизация каталога и
+  // действие продавца совпали по времени) не запускать разлогин дважды
+  // и не показывать сообщение об истечении сессии несколько раз подряд.
+  static bool _handlingSessionExpiry = false;
+
+  /// Централизованная реакция на два вида ошибок авторизации, общих для
+  /// всего API, — вызывается после каждого запроса, сразу как получен
+  /// response.statusCode:
+  ///
+  ///  - 402 (Payment Required) — подписка компании истекла, кидаем на
+  ///    экран "Обуна ба охир расид" (было и раньше, без изменений).
+  ///
+  ///  - 401 (Unauthorized) — JWT-токен невалиден или истёк. Токен живёт
+  ///    ровно 24 часа (см. backend/internal/auth/jwt.go), а в приложении
+  ///    НЕТ автообновления токена — если сессия не была обновлена входом
+  ///    заново, токен тихо умирает, и любой следующий запрос падает с
+  ///    сырым "Неверный токен" от сервера. Раньше это сообщение просто
+  ///    показывалось как обычная ошибка на том экране, где кассир
+  ///    случайно на него наткнулся (например, при добавлении товара) —
+  ///    без объяснения и без выхода из тупика, кроме случайно
+  ///    угаданного "выйти и зайти заново". Теперь при 401 приложение
+  ///    само делает ровно это: тихо разлогинивает (чистит токен и кэш
+  ///    товаров — см. комментарий про clearProductCache в logout()) и
+  ///    возвращает на экран входа с понятным сообщением вместо тупика.
+  void _handleAuthErrors(int statusCode) {
     if (statusCode == 402) {
       navigatorKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(
@@ -110,6 +137,54 @@ class ApiService {
         ),
         (route) => false,
       );
+      return;
+    }
+
+    if (statusCode == 401) {
+      if (_handlingSessionExpiry) return;
+      _handlingSessionExpiry = true;
+      unawaited(_forceReLoginAfterSessionExpiry());
+    }
+  }
+
+  /// Чистит сессию (токен, роль, company/shop_id — те же ключи, что и
+  /// обычный logout) и кэш товаров, затем сообщает всему приложению
+  /// через DataRefreshService, что нужно вернуться на экран входа.
+  ///
+  /// Не переиспользует AuthService.logout() напрямую, чтобы не заводить
+  /// циклический импорт api_service.dart <-> auth_service.dart (последний
+  /// уже импортирует api_service.dart ради ProductCreateResult и т.п.) —
+  /// набор очищаемых ключей и вызов clearProductCache() продублирован
+  /// намеренно, это буквально три строки.
+  Future<void> _forceReLoginAfterSessionExpiry() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('jwt_token');
+      await prefs.remove('user_role');
+      await prefs.remove('username');
+      await prefs.remove('company_id');
+      await prefs.remove('company_name');
+      await prefs.remove('shop_id');
+      await prefs.remove('shop_name');
+      await prefs.remove('needs_shop_setup');
+      await prefs.remove('terminal_mode');
+      await _db.clearProductCache();
+
+      DataRefreshService.instance.notifySessionExpired(
+        'Сессия истекла. Пожалуйста, войдите снова.',
+      );
+
+      // Если продавец в этот момент был глубоко в каком-то экране,
+      // открытом поверх кассы (Navigator.push, например "Добавить товар"
+      // или "Склад") — одной перерисовки корневого AppBootstrapper
+      // недостаточно: открытый поверх экран так и останется висеть на
+      // стеке навигации, а событие onSessionExpired просто изменит
+      // состояние ПОД ним, невидимо для продавца. Схлопываем стек до
+      // самого корня, чтобы экран входа реально стал виден, а не просто
+      // "готов появиться", если продавец сам вручную закроет все экраны.
+      navigatorKey.currentState?.popUntil((route) => route.isFirst);
+    } finally {
+      _handlingSessionExpiry = false;
     }
   }
 
@@ -129,7 +204,7 @@ class ApiService {
             headers: await _getHeaders(),
           )
           .timeout(const Duration(seconds: 10));
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
         return json['barcode'] as String?;
@@ -140,35 +215,69 @@ class ApiService {
     }
   }
 
+  /// Ищет товар по штрихкоду для горячего пути кассы (каждый скан).
+  ///
+  /// ВАЖНО: раньше это был запрос на сервер НА КАЖДЫЙ скан (с фолбэком в
+  /// кэш только при ошибке/офлайне). Сервер у нас в другом регионе от
+  /// магазинов, поэтому каждый такой запрос — это полный сетевой
+  /// round-trip, который кассир ощущал как задержку перед тем, как товар
+  /// попадёт в корзину.
+  //
+  // Теперь порядок обратный — локальный кэш ВСЕГДА проверяется первым,
+  // синхронно и мгновенно (in-memory индекс в DatabaseHelper), а сеть
+  // используется только если товара в кэше нет (новый товар, ещё не
+  // попавший в каталог кассы) — чтобы не отвечать кассиру ложным "товар
+  // не найден" только из-за того, что фоновая синхронизация каталога
+  // ещё не успела подхватить новинку. Если товар найден в кэше — сеть
+  // вообще не трогаем: цена/остаток на экране могут на несколько минут
+  // отставать от сервера, но это не страшно, т.к. финальная проверка
+  // остатка и цены всё равно происходит на сервере в момент оформления
+  // чека (см. sync_service.dart — чек с нехваткой товара отклоняется
+  // сервером и требует ручного решения, а не тихо проходит).
   Future<Product?> getProductByBarcode(String barcode) async {
-    if (ConnectivityService.instance.isOnline) {
-      try {
-        final response = await http
-            .get(
-              Uri.parse('$baseUrl/api/products/barcode/$barcode'),
-              headers: await _getHeaders(),
-            )
-            // Таймаут снижен с 10 до 3 секунд: это горячий путь кассы
-            // (сканирование штрихкода на каждый товар), и при реальном
-            // отсутствии сети/сервера продавец не должен ждать долго
-            // прежде чем сработает офлайн-фолбэк на локальный кэш.
-            .timeout(const Duration(seconds: 3));
-        _checkSubscription(response.statusCode);
-        if (response.statusCode == 200) {
-          final json = jsonDecode(response.body);
-          return Product.fromJson(json);
-        }
-      } catch (e) {
-        debugPrint('API ERROR: $e');
-        // Сетевая ошибка — сразу помечаем "нет сети", чтобы следующий
-        // скан/поиск не повторял тот же таймаут, а сразу шёл в кэш.
-        ConnectivityService.instance.markOffline();
-      }
+    final cached = await _db.getCachedProductByBarcode(barcode);
+    // units пустой у кэшированного товара — признак "битой"/устаревшей
+    // записи (например, кэш от версии до появления единиц продажи).
+    // Такой товар нельзя молча добавить в корзину (см. комментарий ниже
+    // про синтетическую единицу id = 0), поэтому для него всё равно
+    // идём в сеть — как будто это cache miss.
+    if (cached != null && (cached['units'] as List? ?? const []).isNotEmpty) {
+      return Product.fromJson(cached);
     }
 
-    // Офлайн или ошибка — ищем в кэше
-    final cached = await _db.getCachedProductByBarcode(barcode);
-    if (cached != null) return Product.fromJson(cached);
+    if (!ConnectivityService.instance.isOnline) {
+      // Офлайн и в кэше товара нет (или кэш "битый") — честно говорим,
+      // что не нашли, а не гадаем.
+      return null;
+    }
+
+    try {
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/api/products/barcode/$barcode'),
+            headers: await _getHeaders(),
+          )
+          // Таймаут снижен с 10 до 3 секунд: сюда попадают только новые,
+          // ещё не закэшированные товары, но продавец всё равно не
+          // должен ждать долго прежде чем сработает явная ошибка "не
+          // найден" вместо зависшего интерфейса.
+          .timeout(const Duration(seconds: 3));
+      _handleAuthErrors(response.statusCode);
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        // Кладём найденный товар в кэш сразу — повторный скан этого же
+        // штрихкода (или его единицы) в этой же смене будет уже
+        // мгновенным, из кэша.
+        unawaited(_db.upsertCachedProducts([json]));
+        return Product.fromJson(json);
+      }
+    } catch (e) {
+      debugPrint('API ERROR: $e');
+      // Сетевая ошибка — сразу помечаем "нет сети", чтобы следующий
+      // скан/поиск не повторял тот же таймаут.
+      ConnectivityService.instance.markOffline();
+    }
+
     return null;
   }
 
@@ -182,7 +291,7 @@ class ApiService {
           '$baseUrl/api/products',
         ).replace(queryParameters: {'page': '$page', 'limit': '$limit'});
         final response = await http.get(uri, headers: await _getHeaders());
-        _checkSubscription(response.statusCode);
+        _handleAuthErrors(response.statusCode);
         if (response.statusCode == 200) {
           final body = jsonDecode(response.body) as Map<String, dynamic>;
           final items = (body['data'] as List)
@@ -348,7 +457,7 @@ class ApiService {
             body: jsonEncode(productData),
           )
           .timeout(const Duration(seconds: 15));
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200 || response.statusCode == 201) {
         final body = jsonDecode(response.body);
         return ProductCreateResult.success(body['id'] as int);
@@ -408,7 +517,7 @@ class ApiService {
             body: jsonEncode(unitData),
           )
           .timeout(const Duration(seconds: 15));
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200 || response.statusCode == 201) {
         return null; // успех
       }
@@ -425,12 +534,17 @@ class ApiService {
     }
   }
 
+  /// [barcode] — штрихкод товара (если есть), нужен ТОЛЬКО чтобы после
+  /// успешного обновления сразу освежить его в локальном кэше кассы
+  /// (product_cache) — см. комментарий ниже. На сам PATCH-запрос никак
+  /// не влияет.
   Future<bool> updateInventory(
     int id,
     double addStock,
     double sellPrice,
     double buyPrice, {
     String? reason,
+    String? barcode,
   }) async {
     try {
       final response = await http.patch(
@@ -445,11 +559,22 @@ class ApiService {
         }),
       );
 
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
 
       if (response.statusCode == 200) {
         DataRefreshService.instance.notifyProductChanged();
         DataRefreshService.instance.notifyAnalyticsChanged();
+        // Как и в addProduct: ответ сервера здесь — просто {status: ok},
+        // без самого товара, поэтому нельзя обновить кэш "по данным
+        // ответа". Вместо ожидания плановой синхронизации (до 5 минут)
+        // или случайного захода на склад — сразу же дёргаем товар по
+        // его штрихкоду (если он есть), тот же метод сам кладёт свежую
+        // цену/остаток в product_cache. Без этого кассир мог бы после
+        // "экстренной" смены цены прямо во время смены ещё несколько
+        // минут продавать по старой цене.
+        if (barcode != null && barcode.isNotEmpty) {
+          unawaited(getProductByBarcode(barcode));
+        }
         return true;
       }
 
@@ -486,7 +611,7 @@ class ApiService {
       );
       final response = await http.Response.fromStream(streamed);
 
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
 
       if (response.statusCode == 200) {
         DataRefreshService.instance.notifyProductChanged();
@@ -537,7 +662,7 @@ class ApiService {
       return const SaleSendResult(SaleSendStatus.networkError);
     }
 
-    _checkSubscription(response.statusCode);
+    _handleAuthErrors(response.statusCode);
     if (response.statusCode == 200) {
       DataRefreshService.instance.notifySaleChanged();
       DataRefreshService.instance.notifyAnalyticsChanged();
@@ -572,7 +697,7 @@ class ApiService {
           '$baseUrl/api/sales',
         ).replace(queryParameters: {'page': '$page', 'limit': '$limit'});
         final response = await http.get(uri, headers: await _getHeaders());
-        _checkSubscription(response.statusCode);
+        _handleAuthErrors(response.statusCode);
         if (response.statusCode == 200) {
           final body = jsonDecode(response.body) as Map<String, dynamic>;
           final items = (body['data'] as List).cast<Map<String, dynamic>>();
@@ -620,7 +745,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/analytics/top-products?limit=$limit&$query'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200) return jsonDecode(response.body);
       return [];
     } catch (e) {
@@ -634,7 +759,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/analytics/sales-by-day?days=$days'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200) return jsonDecode(response.body);
       return [];
     } catch (e) {
@@ -648,7 +773,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/analytics/low-stock?threshold=$threshold'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200) return jsonDecode(response.body);
       return [];
     } catch (e) {
@@ -667,7 +792,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/analytics/sellers?$query'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200) return jsonDecode(response.body);
       return [];
     } catch (e) {
@@ -683,7 +808,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/users'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200) return jsonDecode(response.body);
       return [];
     } catch (e) {
@@ -716,7 +841,7 @@ class ApiService {
         headers: await _getHeaders(),
         body: jsonEncode(body),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -729,7 +854,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/users/$id'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -744,7 +869,7 @@ class ApiService {
         headers: await _getHeaders(),
         body: jsonEncode({'pin': pin}),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -878,7 +1003,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/telegram/link-token'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200) return jsonDecode(response.body);
       return null;
     } catch (e) {
@@ -893,7 +1018,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/telegram/link'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -930,7 +1055,7 @@ class ApiService {
             // Если сети реально нет, продавец не должен ждать по 5 сек
             // на каждую букву прежде чем увидит результат из кэша.
             .timeout(const Duration(seconds: 2));
-        _checkSubscription(response.statusCode);
+        _handleAuthErrors(response.statusCode);
         if (response.statusCode == 200) {
           final List<dynamic> data = jsonDecode(response.body);
           return data.map((json) => Product.fromJson(json)).toList();
@@ -955,7 +1080,7 @@ class ApiService {
         headers: await _getHeaders(),
         body: jsonEncode({'reason': reason}),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -984,7 +1109,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/analytics/summary?$query'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200)
         return jsonDecode(response.body) as Map<String, dynamic>;
       return null;
@@ -1000,7 +1125,7 @@ class ApiService {
       final response = await http
           .get(Uri.parse('$baseUrl/api/shops'), headers: await _getHeaders())
           .timeout(const Duration(seconds: 10));
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200) return jsonDecode(response.body);
       return [];
     } catch (e) {
@@ -1013,6 +1138,7 @@ class ApiService {
   /// автоматически пойдут в рамках этого магазина, так как shop_id зашит в JWT.
   Future<void> _applyShopSwitch(Map<String, dynamic> data) async {
     final prefs = await SharedPreferences.getInstance();
+    final previousShopId = prefs.getInt('shop_id');
     if (data['token'] != null) {
       await prefs.setString('jwt_token', data['token']);
     }
@@ -1024,6 +1150,25 @@ class ApiService {
       await prefs.setString('shop_name', shopName);
     }
     await prefs.setBool('needs_shop_setup', false);
+
+    // Кэш товаров (product_cache) теперь основной путь поиска при
+    // сканировании — он привязан к тому магазину, из которого был
+    // синхронизирован. При переключении на другой магазин ОБЯЗАТЕЛЬНО
+    // чистим его: иначе кассир на новом магазине какое-то время видел
+    // бы (и мог продать!) товары и цены из ПРЕДЫДУЩЕГО магазина —
+    // до следующей полной синхронизации каталога. Дублирующийся вызов
+    // с тем же shop_id (например, повторный switch на текущий магазин)
+    // пропускаем — не имеет смысла чистить кэш магазина сам в себя.
+    final newShopId = data['shop_id'] as int?;
+    if (newShopId != null && newShopId != previousShopId) {
+      await _db.clearProductCache();
+      // Сразу тянем каталог нового магазина, не дожидаясь ближайшего
+      // тика периодической синхронизации (следующие 5 минут) — иначе
+      // первые сканы после переключения магазина будут словно "офлайн"
+      // (кэш пуст, значит каждый скан уйдёт в сеть, что нормально, но
+      // лучше сразу прогреть кэш, раз уж мы точно сейчас онлайн).
+      unawaited(refreshOfflineCache());
+    }
   }
 
   /// Создать новый магазин. Он сразу становится активным (владелец получает
@@ -1035,7 +1180,7 @@ class ApiService {
         headers: await _getHeaders(),
         body: jsonEncode({'name': name}),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 201) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         await _applyShopSwitch(data);
@@ -1054,7 +1199,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/shops/$id/switch'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         await _applyShopSwitch(data);
@@ -1073,7 +1218,7 @@ class ApiService {
         headers: await _getHeaders(),
         body: jsonEncode({'name': name}),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -1086,7 +1231,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/shops/$id'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -1108,7 +1253,7 @@ class ApiService {
           '$baseUrl/api/debtors',
         ).replace(queryParameters: {'page': '$page', 'limit': '$limit'});
         final response = await http.get(uri, headers: await _getHeaders());
-        _checkSubscription(response.statusCode);
+        _handleAuthErrors(response.statusCode);
         if (response.statusCode == 200) {
           final body = jsonDecode(response.body) as Map<String, dynamic>;
           final items = (body['data'] as List).cast<Map<String, dynamic>>();
@@ -1168,7 +1313,7 @@ class ApiService {
             }),
           )
           .timeout(const Duration(seconds: 8));
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 201) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         await _db.upsertCachedDebtors([data]);
@@ -1225,7 +1370,7 @@ class ApiService {
             body: jsonEncode({'amount': amount, 'type': type, 'note': note}),
           )
           .timeout(const Duration(seconds: 8));
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         await _db.upsertCachedDebtors([data]);
@@ -1273,7 +1418,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/products/$id'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200) {
         await _db.removeCachedProduct(id);
         DataRefreshService.instance.notifyProductChanged();
@@ -1291,7 +1436,7 @@ class ApiService {
         Uri.parse('$baseUrl/api/debtors/$id'),
         headers: await _getHeaders(),
       );
-      _checkSubscription(response.statusCode);
+      _handleAuthErrors(response.statusCode);
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -1307,7 +1452,7 @@ class ApiService {
               headers: await _getHeaders(),
             )
             .timeout(const Duration(seconds: 10));
-        _checkSubscription(response.statusCode);
+        _handleAuthErrors(response.statusCode);
         if (response.statusCode == 200) {
           final items = (jsonDecode(response.body) as List)
               .cast<Map<String, dynamic>>();

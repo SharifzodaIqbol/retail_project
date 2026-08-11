@@ -8,7 +8,7 @@ bool isRateLimited(int? seconds) => seconds != null && seconds > 0;
 
 /// Экран терминального режима.
 /// Показывается когда terminal_mode=true и пользователь не залогинен.
-/// Продавцы входят по PIN. Хозяин может вернуться через долгое нажатие.
+/// Продавцы входят по PIN. Хозяин может вернуться нажатием на кнопку "Баромадан".
 /// Офлайн: список продавцов и проверка PIN берутся из SQLite-кэша.
 class TerminalScreen extends StatefulWidget {
   final int companyId;
@@ -165,7 +165,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
                   ),
                   const SizedBox(width: 12), // Отступ между текстом и кнопкой
                   GestureDetector(
-                    onLongPress: _exitToOwner,
+                    onTap: _exitToOwner,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 10,

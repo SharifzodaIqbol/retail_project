@@ -292,7 +292,7 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
       builder: (_) => AlertDialog(
         title: const Text('Ҳолати терминал'),
         content: const Text(
-          'Барнома ба ҳолати касса мегузарад.\nКормандон метавонанд ба PIN ворид шаванд.\nБарои баромадан тугмаро нигоҳ дошта истед ва пароли худро ворид кунед.',
+          'Барнома ба ҳолати касса мегузарад.\nКормандон метавонанд ба PIN ворид шаванд.\nБарои баромадан тугмаро пахш кунед ва пароли худро ворид кунед.',
         ),
         actions: [
           TextButton(
@@ -670,7 +670,9 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                     ..._filteredUsers.map(
                       (u) => _UserTile(
                         user: u,
-                        onSetPin: () => _showSetPinDialog(u),
+                        onSetPin: u['role'] != 'owner'
+                            ? () => _showSetPinDialog(u)
+                            : null,
                         onDelete: u['role'] != 'owner'
                             ? () => _deleteUser(u['id'], u['username'])
                             : null,
@@ -814,10 +816,10 @@ class _ActionCard extends StatelessWidget {
 
 class _UserTile extends StatelessWidget {
   final Map<String, dynamic> user;
-  final VoidCallback onSetPin;
+  final VoidCallback? onSetPin;
   final VoidCallback? onDelete;
 
-  const _UserTile({required this.user, required this.onSetPin, this.onDelete});
+  const _UserTile({required this.user, this.onSetPin, this.onDelete});
 
   @override
   Widget build(BuildContext context) {
@@ -917,16 +919,17 @@ class _UserTile extends StatelessWidget {
               ],
             ),
           ),
-          // Кнопка PIN
-          IconButton(
-            icon: Icon(
-              hasPin ? Icons.pin_outlined : Icons.pin,
-              color: hasPin ? Colors.green : Colors.grey,
-              size: 22,
+          // Кнопка PIN (недоступна для соҳибкор — вай метавонад бидуни PIN фурӯш кунад)
+          if (onSetPin != null)
+            IconButton(
+              icon: Icon(
+                hasPin ? Icons.pin_outlined : Icons.pin,
+                color: hasPin ? Colors.green : Colors.grey,
+                size: 22,
+              ),
+              tooltip: hasPin ? 'Тағйир додани PIN' : 'Насб кардани PIN',
+              onPressed: onSetPin,
             ),
-            tooltip: hasPin ? 'Тағйир додани PIN' : 'Насб кардани PIN',
-            onPressed: onSetPin,
-          ),
           if (onDelete != null)
             IconButton(
               icon: const Icon(

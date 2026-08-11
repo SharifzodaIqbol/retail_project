@@ -320,6 +320,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                               sell!,
                               buy!,
                               reason: isSeller ? reasonCtrl.text.trim() : null,
+                              barcode: product.barcode,
                             );
 
                             if (!mounted) return;

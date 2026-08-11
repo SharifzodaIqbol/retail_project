@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:barcode_widget/barcode_widget.dart';
 import '../services/api_service.dart';
 import '../services/data_refresh_service.dart';
+import '../services/connectivity_service.dart';
 import 'package:retail_app/widgets/barcode_scanner.dart';
 
 /// Карточка одной доп. единицы продажи в форме добавления товара:
@@ -261,6 +263,13 @@ class _AddProductScreenState extends State<AddProductScreen> {
   // запросов повторными тапами.
   bool _generatingBarcode = false;
 
+  // См. комментарий в initState — держим локальную копию состояния сети,
+  // обновляемую явно через setState, т.к. build() сам по себе не
+  // реагирует на изменение ConnectivityService.instance.isOnline.
+  bool _lastKnownOnline = true;
+  StreamSubscription<void>? _connectivityRestoredSub;
+  Timer? _connectivityPollTimer;
+
   @override
   void initState() {
     super.initState();
@@ -269,6 +278,33 @@ class _AddProductScreenState extends State<AddProductScreen> {
     // полем появлялась/исчезала и обновлялась сама, без отдельной кнопки
     // "показать".
     _barcodeController.addListener(_onBarcodeChanged);
+
+    // Баннер "нет сети" в build() читает ConnectivityService.isOnline
+    // напрямую, но сам по себе НЕ является реактивным — Flutter
+    // перерисовывает виджет только когда что-то явно вызывает setState.
+    // Без подписки ниже баннер показывался бы только тем состоянием
+    // сети, что было на момент ПЕРВОЙ отрисовки экрана, и не менялся бы
+    // сам по себе, даже если сеть появится/пропадёт, пока форма открыта
+    // (что и произошло — баннер "залипал").
+    //
+    // onConnectionRestored сообщает только про переход офлайн→онлайн —
+    // им реагируем мгновенно. Обратный переход (сеть пропала прямо во
+    // время заполнения формы) ConnectivityService отдельным потоком не
+    // сообщает, поэтому подстраховываемся редким опросом раз в 3 сек —
+    // достаточно быстро для баннера-подсказки, но не расходует заметно
+    // батарею/CPU.
+    _lastKnownOnline = ConnectivityService.instance.isOnline;
+    _connectivityRestoredSub = ConnectivityService.instance.onConnectionRestored
+        .listen((_) {
+          if (!mounted) return;
+          setState(() => _lastKnownOnline = true);
+        });
+    _connectivityPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      final isOnline = ConnectivityService.instance.isOnline;
+      if (isOnline != _lastKnownOnline && mounted) {
+        setState(() => _lastKnownOnline = isOnline);
+      }
+    });
   }
 
   void _onBarcodeChanged() => setState(() {});
@@ -305,6 +341,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
 
   @override
   void dispose() {
+    _connectivityRestoredSub?.cancel();
+    _connectivityPollTimer?.cancel();
     _barcodeController.removeListener(_onBarcodeChanged);
     _nameController.dispose();
     _barcodeController.dispose();
@@ -344,6 +382,27 @@ class _AddProductScreenState extends State<AddProductScreen> {
 
   void _submitData() async {
     if (!_formKey.currentState!.validate()) return;
+
+    // Создание товара, в отличие от продаж, НЕ имеет офлайн-очереди —
+    // без сети запрос просто провисит до таймаута (15 сек) и упадёт с
+    // сухим "Вақт тамом шуд". Лучше сказать честно и сразу: без сети
+    // новый товар завести нельзя, а не заставлять продавца ждать и
+    // гадать, зависло приложение или нет. Данные из формы при этом не
+    // теряются — она остаётся заполненной, можно нажать "Сохранить"
+    // повторно, когда сеть вернётся.
+    if (!ConnectivityService.instance.isOnline) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            '⚠️ Ба интернет дастраси надоред. Маҳсулоти '
+            'навро офлайн дароварда наметавонед',
+          ),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
 
     final extraUnitsError = _validateExtraUnits();
     if (extraUnitsError != null) {
@@ -433,6 +492,32 @@ class _AddProductScreenState extends State<AddProductScreen> {
     // потому что список товаров кэшируется в состоянии экрана и не
     // перечитывается сам по себе.
     DataRefreshService.instance.notifyProductChanged();
+
+    // Гарантированно кладём только что созданный товар в локальный
+    // кэш кассы (product_cache), не полагаясь на побочный эффект того,
+    // что где-то откроется экран склада и своим перезапросом случайно
+    // закэширует его. Без этого первый скан свежедобавленного товара
+    // ВСЕГДА уходил бы в сеть (кэш ведь пуст для него), даже если
+    // продавец добавил его секунду назад и тут же понёс сканировать.
+    //
+    // Ответ POST /api/products не содержит единиц продажи (они
+    // добавляются отдельными запросами следом), поэтому запрашиваем
+    // канонический товар с сервера по ЛЮБОМУ известному штрихкоду —
+    // самого товара или любой из его единиц (backend ищет по обоим).
+    // getProductByBarcode сам положит результат в кэш — второй раз
+    // делать это вручную не нужно.
+    final anyKnownBarcode = [
+      _barcodeController.text.trim(),
+      ..._extraUnits.map((u) => u.barcodeController.text.trim()),
+    ].firstWhere((b) => b.isNotEmpty, orElse: () => '');
+    if (anyKnownBarcode.isNotEmpty) {
+      unawaited(_apiService.getProductByBarcode(anyKnownBarcode));
+    }
+    // Товар без единого штрихкода (ни у самого товара, ни у единиц)
+    // всё равно нечем сканировать на кассе — кэшировать его прямо
+    // сейчас нет смысла, он и так появится при следующей плановой
+    // синхронизации каталога (раз в 5 минут / при заходе на склад).
+
     Navigator.pop(context);
 
     if (unitErrors.isEmpty) {
@@ -476,6 +561,32 @@ class _AddProductScreenState extends State<AddProductScreen> {
           key: _formKey,
           child: ListView(
             children: [
+              // Ненавязчивый баннер: продавец видит ДО того, как заполнит
+              // всю форму, что сохранить товар сейчас не получится —
+              // а не только в момент нажатия "Сохранить" в самом конце.
+              if (!_lastKnownOnline)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    border: Border.all(color: Colors.orange),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.wifi_off, color: Colors.orange),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Ба интернет дастраси надоред. Даровардани маҳсулоти '
+                          'нав дороии интернетро талаб мекунад.',
+                          style: TextStyle(color: Colors.orange),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               TextFormField(
                 controller: _nameController,
                 decoration: const InputDecoration(labelText: 'Номи маҳсулот'),

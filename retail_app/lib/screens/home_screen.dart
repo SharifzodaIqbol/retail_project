@@ -71,6 +71,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // Публичный метод: вызывается снаружи (из MainShell), когда пользователь
+  // возвращается на вкладку "Касса". HomeScreen живёт внутри IndexedStack и
+  // не пересоздаётся при переключении вкладок, поэтому initState срабатывает
+  // только один раз — без этого метода фокус сканера после возврата на
+  // вкладку никто не запрашивал.
+  void requestScannerFocus() => _requestScannerFocus();
+
   void _handleHardwareKey(KeyEvent event) {
     if (event is! KeyDownEvent) return;
 
@@ -98,6 +105,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (product != null) {
       if (mounted) {
+        // Страховка на случай, если сервер всё же вернул товар с пустым
+        // units (например, старая версия бэкенда без фикса на getProductByBarcode) —
+        // предпочитаем явную ошибку СРАЗУ при сканировании, а не тихое
+        // добавление в корзину с синтетической единицей id = 0, которое
+        // обнаружится только на оплате и без понятной причины.
+        if (product.units.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Хатогӣ бо "${product.name}": маълумоти воҳиди фурӯш '
+                'боргирӣ нашуд. Бори дигар скан кунед.',
+              ),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+          return;
+        }
         if (product.unit == 'kg') {
           _promptWeightAndAdd(product);
         } else {

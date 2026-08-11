@@ -4,10 +4,6 @@ import '../services/api_service.dart';
 
 enum _DatePreset { all, today, yesterday, week, month }
 
-// ─── Единая палитра экрана (взята из home_screen / _PaymentDialog) ─────────
-// Вынесено сюда, чтобы вкладка истории визуально совпадала с остальным
-// приложением. Если позже заведёте общий ThemeData/AppColors — просто
-// замените константы ниже на ссылки на него, виджеты трогать не придётся.
 class _Palette {
   static const accent = Color(
     0xFF4F6EF7,

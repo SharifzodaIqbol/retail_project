@@ -366,6 +366,15 @@ class DatabaseHelper {
   // обращении.
   List<Map<String, dynamic>>? _memProducts; // null = ещё не загружен из БД
   final Map<String, Map<String, dynamic>> _memByBarcode = {};
+  // Индекс по штрихкодам ЕДИНИЦ продажи (упаковка/блок/коробка) —
+  // отдельно от штрихкода самого товара. Раньше офлайн-поиск смотрел
+  // только product_cache.barcode и не находил товар, если кассир
+  // сканировал штрихкод именно на упаковке (product_units.barcode) —
+  // расхождение с онлайн-поведением (GetByUnitBarcode на бэкенде),
+  // из-за которого один и тот же товар "находился" в сети и "не
+  // находился" в офлайне в зависимости от того, какой именно штрихкод
+  // на нём отсканировали.
+  final Map<String, Map<String, dynamic>> _memByUnitBarcode = {};
 
   Future<void> _ensureMemLoaded() async {
     if (_memProducts != null) return;
@@ -377,9 +386,21 @@ class DatabaseHelper {
 
   void _rebuildBarcodeIndex() {
     _memByBarcode.clear();
+    _memByUnitBarcode.clear();
     for (final p in _memProducts ?? const <Map<String, dynamic>>[]) {
       final barcode = p['barcode'] as String? ?? '';
       if (barcode.isNotEmpty) _memByBarcode[barcode] = p;
+
+      final units = p['units'];
+      if (units is List) {
+        for (final u in units) {
+          if (u is! Map) continue;
+          final unitBarcode = u['barcode'] as String?;
+          if (unitBarcode != null && unitBarcode.isNotEmpty) {
+            _memByUnitBarcode[unitBarcode] = p;
+          }
+        }
+      }
     }
   }
 
@@ -505,13 +526,35 @@ class DatabaseHelper {
     return list;
   }
 
+  /// Полностью очищает кэш товаров — и в SQLite, и in-memory индексы.
+  ///
+  /// ВАЖНО: вызывать при выходе из аккаунта (logout) и при смене
+  /// магазина/компании на этом устройстве. Кэш теперь ОСНОВНОЙ путь
+  /// поиска товара при сканировании (см. ApiService.getProductByBarcode),
+  /// поэтому без явной очистки products_cache "переживёт" logout и
+  /// покажет кассиру следующей смены/магазина на этом же телефоне чужие
+  /// товары и чужие цены — раньше, пока кэш был лишь редким офлайн-
+  /// фолбэком, это было маловероятно заметить, а теперь — то, что
+  /// покажется в корзине почти на каждом скане.
+  Future<void> clearProductCache() async {
+    final db = await instance.database;
+    await db.delete('product_cache');
+    _memProducts = [];
+    _memByBarcode.clear();
+    _memByUnitBarcode.clear();
+  }
+
   /// Ищет товар по штрихкоду в кэше. O(1) по in-memory индексу вместо
   /// похода в sqflite на каждый скан.
+  ///
+  /// Штрихкод может принадлежать как самому товару, так и одной из его
+  /// единиц продажи (упаковка/блок) — проверяем оба индекса, как это
+  /// делает бэкенд (GetByBarcode, затем GetByUnitBarcode).
   Future<Map<String, dynamic>?> getCachedProductByBarcode(
     String barcode,
   ) async {
     await _ensureMemLoaded();
-    return _memByBarcode[barcode];
+    return _memByBarcode[barcode] ?? _memByUnitBarcode[barcode];
   }
 
   /// Поиск товара по названию в кэше — линейный проход по in-memory
