@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"retail-managment-system/internal/domain"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -149,6 +150,98 @@ func (r *ProductRepository) BarcodeExists(ctx context.Context, companyID int, ba
 	return exists, nil
 }
 
+// BeginTx — открывает транзакцию для вызывающего кода. Используется там,
+// где нужно объединить много операций (например, весь Excel-импорт) в одну
+// транзакцию/один commit вместо отдельной транзакции на каждую строку.
+func (r *ProductRepository) BeginTx(ctx context.Context) (pgx.Tx, error) {
+	return r.db.Begin(ctx)
+}
+
+// LoadImportContext — загружает ОДНИМ проходом (3 запроса вместо
+// O(строк файла) запросов) всё, что нужно для обработки Excel-импорта:
+// все занятые штрихкоды компании, карту "имя товара -> штрихкод" в рамках
+// магазина и карту "штрихкод товара -> его текущие доп. единицы". Вызывается
+// один раз перед обработкой файла, дальше держится в памяти и обновляется
+// по ходу импорта (см. importProducts).
+func (r *ProductRepository) LoadImportContext(ctx context.Context, companyID, shopID int) (*domain.ImportContext, error) {
+	impCtx := &domain.ImportContext{
+		Barcodes:      make(map[string]bool),
+		NameToBarcode: make(map[string]string),
+		ProductLabels: make(map[string]map[string]bool),
+	}
+
+	// Все занятые в компании штрихкоды — и товаров, и доп. единиц, потому
+	// что это два разных уникальных индекса, но подобранный код должен
+	// быть свободен в обоих сразу (см. комментарий у прежнего BarcodeExists).
+	rows, err := r.db.Query(ctx, `
+		SELECT barcode FROM products WHERE company_id = $1 AND barcode IS NOT NULL
+		UNION
+		SELECT barcode FROM product_units WHERE company_id = $1 AND barcode IS NOT NULL`,
+		companyID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		impCtx.Barcodes[b] = true
+	}
+	rows.Close()
+
+	// Имя -> штрихкод для товаров ЭТОГО магазина — чтобы строки без
+	// штрихкода при повторном импорте матчились на уже существующий товар
+	// по названию, а не всегда получали новый сгенерированный штрихкод.
+	rows, err = r.db.Query(ctx, `
+		SELECT name, barcode FROM products
+		WHERE company_id = $1 AND shop_id = $2 AND barcode IS NOT NULL`,
+		companyID, shopID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var name, barcode string
+		if err := rows.Scan(&name, &barcode); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		impCtx.NameToBarcode[domain.NormalizeImportName(name)] = barcode
+	}
+	rows.Close()
+
+	// Штрихкод товара -> набор названий его текущих доп. единиц, чтобы
+	// проверять лимит MaxExtraUnitsPerProduct без SELECT на каждую строку.
+	rows, err = r.db.Query(ctx, `
+		SELECT p.barcode, pu.label
+		FROM product_units pu
+		JOIN products p ON p.id = pu.product_id
+		WHERE pu.company_id = $1 AND pu.is_base = false AND pu.is_active = true
+		  AND p.company_id = $1 AND p.barcode IS NOT NULL`,
+		companyID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var barcode, label string
+		if err := rows.Scan(&barcode, &label); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if impCtx.ProductLabels[barcode] == nil {
+			impCtx.ProductLabels[barcode] = make(map[string]bool)
+		}
+		impCtx.ProductLabels[barcode][label] = true
+	}
+	rows.Close()
+
+	return impCtx, nil
+}
+
 // SearchByName — ищет товары по названию в рамках одного магазина.
 func (r *ProductRepository) SearchByName(ctx context.Context, companyID, shopID int, name string) ([]domain.Product, error) {
 	query := `SELECT id, name, barcode, sell_price, stock, unit FROM products 
@@ -282,19 +375,21 @@ func (r *ProductRepository) GetNameByID(ctx context.Context, id int, companyID, 
 	return name, nil
 }
 
-// UpsertFromImport — создаёт товар или, если в этом магазине уже есть товар
-// с таким баркодом, обновляет его (название/цены/остаток/единицу), а также
-// синхронизирует его базовую единицу продажи и (опционально) создаёт
-// дополнительные единицы продажи, описанные в этой же строке Excel
-// (см. ExtraUnits — колонки за пределами старого фиксированного формата).
+// UpsertFromImportRow — то же самое, что раньше делал UpsertFromImport, но
+// рассчитано на пакетную обработку всего файла импорта:
+//
+//   - tx — САМА транзакция уже открыта вызывающим кодом (см. handler
+//     importProducts) ОДИН раз на весь файл, а не на каждую строку. Здесь
+//     ожидается вложенная транзакция (tx.Begin(ctx) от уже открытой tx),
+//     что в pgx реализуется через SAVEPOINT: если эта строка провалится
+//     (например, нарушение constraint'а), вызывающий код откатывает только
+//     её через Rollback этой вложенной tx, а не весь файл целиком.
+//   - impCtx — предзагруженный ImportContext (см. LoadImportContext), сюда
+//     не ходим в БД за проверками, которые можно сделать по данным,
+//     загруженным один раз перед циклом.
+//
 // Возвращает true, если была операция INSERT (новый товар), и false, если был UPDATE.
-func (r *ProductRepository) UpsertFromImport(ctx context.Context, p domain.Product, extraUnits []domain.CreateProductUnitRequest) (created bool, err error) {
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback(ctx)
-
+func (r *ProductRepository) UpsertFromImportRow(ctx context.Context, tx pgx.Tx, p domain.Product, extraUnits []domain.CreateProductUnitRequest, impCtx *domain.ImportContext) (created bool, err error) {
 	var productID int
 	query := `
 		INSERT INTO products (company_id, shop_id, name, barcode, buy_price, sell_price, stock, unit, is_active)
@@ -337,28 +432,25 @@ func (r *ProductRepository) UpsertFromImport(ctx context.Context, p domain.Produ
 
 	// Проверяем лимит ДО вставки: у товара уже могло быть до
 	// domain.MaxExtraUnitsPerProduct доп. единиц (заведённых вручную через
-	// приложение), и импорт с новыми названиями единиц (не совпадающими с
-	// уже существующими по label) не должен пробить общий лимит — та же
-	// защита, что и в createProductUnit, но здесь речь о ПОВТОРНОМ импорте
-	// уже существующего товара, а не о первом создании.
-	existingLabels := make(map[string]bool)
-	rows, err := tx.Query(ctx, `
-		SELECT label FROM product_units
-		WHERE company_id = $1 AND product_id = $2 AND is_base = false AND is_active = true`,
-		p.CompanyID, productID,
-	)
-	if err != nil {
-		return false, err
-	}
-	for rows.Next() {
-		var label string
-		if err := rows.Scan(&label); err != nil {
-			rows.Close()
-			return false, err
+	// приложение или предыдущим импортом), и импорт с новыми названиями
+	// единиц (не совпадающими с уже существующими по label) не должен
+	// пробить общий лимит — та же защита, что и в createProductUnit, но
+	// здесь речь о ПОВТОРНОМ импорте уже существующего товара. Данные для
+	// этой проверки уже загружены один раз в impCtx (LoadImportContext) —
+	// без SELECT на каждую строку файла.
+	existingLabels := impCtx.ProductLabels[*p.Barcode]
+	if existingLabels == nil {
+		existingLabels = make(map[string]bool)
+	} else {
+		// Копируем, чтобы не мутировать общую карту до успешного commit'а
+		// этой строки — если строка провалится, лимит для товара не
+		// должен "запомнить" единицы, которые в итоге не сохранились.
+		copied := make(map[string]bool, len(existingLabels))
+		for k := range existingLabels {
+			copied[k] = true
 		}
-		existingLabels[label] = true
+		existingLabels = copied
 	}
-	rows.Close()
 
 	existingCount := len(existingLabels)
 	totalAfter := existingCount
@@ -395,5 +487,28 @@ func (r *ProductRepository) UpsertFromImport(ctx context.Context, p domain.Produ
 		}
 	}
 
-	return created, tx.Commit(ctx)
+	// Строка успешно обработана — обновляем impCtx, чтобы последующие
+	// строки ЭТОГО ЖЕ файла видели актуальное состояние (например, если
+	// в файле дважды встречается один и тот же товар без штрихкода —
+	// вторая строка должна найти штрихкод, сгенерированный для первой,
+	// а не сгенерировать ещё один).
+	impCtx.Barcodes[*p.Barcode] = true
+	impCtx.NameToBarcode[domain.NormalizeImportName(p.Name)] = *p.Barcode
+	if len(extraUnits) > 0 {
+		labels := impCtx.ProductLabels[*p.Barcode]
+		if labels == nil {
+			labels = make(map[string]bool)
+			impCtx.ProductLabels[*p.Barcode] = labels
+		}
+		for _, u := range extraUnits {
+			labels[u.Label] = true
+		}
+		for _, u := range extraUnits {
+			if b := u.Barcode; b != nil && *b != "" {
+				impCtx.Barcodes[*b] = true
+			}
+		}
+	}
+
+	return created, nil
 }
