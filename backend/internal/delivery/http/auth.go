@@ -19,6 +19,7 @@ func (h *Handler) register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	req.Username = strings.TrimSpace(req.Username)
 
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
@@ -54,15 +55,14 @@ func (h *Handler) register(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"status": "success"})
 }
 
-// login — вход владельца по username+password.
-// ИСПРАВЛЕНО: добавлен rate limiting (см. internal/ratelimit) — без него
-// пароль можно было подбирать без ограничений.
 func (h *Handler) login(c *gin.Context) {
 	var req domain.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "Неверные данные"})
 		return
 	}
+
+	req.Username = strings.TrimSpace(req.Username)
 
 	ip := c.ClientIP()
 	userKey := "login:" + ip + ":" + strings.ToLower(req.Username)
@@ -95,10 +95,6 @@ func (h *Handler) login(c *gin.Context) {
 	}
 	h.loginLimiter.Reset(userKey)
 
-	// Определяем, в контексте какого магазина будет работать токен владельца:
-	// используем последний выбранный (current_shop_id), если он всё ещё
-	// существует, иначе — первый магазин компании. Если магазинов ещё нет —
-	// shopID = 0, и фронтенд обязан предложить создать первый магазин.
 	shops, err := h.shopRepo.GetAllByCompany(context.Background(), user.CompanyID)
 	if err != nil {
 		logErr(c, err, "Ошибка получения списка магазинов при логине", "company_id", user.CompanyID)

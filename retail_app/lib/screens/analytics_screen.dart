@@ -620,7 +620,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   }
 
   String _fmtShort(double value) {
-    if (value >= 1000) return '${(value / 1000).toStringAsFixed(0)}к';
     return value.toStringAsFixed(0);
   }
 }

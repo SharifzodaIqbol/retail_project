@@ -97,7 +97,7 @@ class _LoginScreenState extends State<LoginScreen> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
           ),
-          content: const Text('Ном ё рамз нодуруст аст!'),
+          content: const Text('Логин ё рамз нодуруст аст!'),
         ),
       );
     }
@@ -188,14 +188,14 @@ class _LoginScreenState extends State<LoginScreen> {
                               ],
                               const SizedBox(height: 28),
 
-                              _FieldLabel('Ном'),
+                              _FieldLabel('Логин'),
                               const SizedBox(height: 8),
                               _AuthTextField(
                                 controller: _usernameController,
                                 enabled:
                                     !_isLoading &&
                                     !isRateLimited(_rateLimitSeconds),
-                                hint: 'Номатонро ворид кунед',
+                                hint: 'Логинатонро ворид кунед',
                                 icon: Icons.person_outline,
                                 textInputAction: TextInputAction.next,
                               ),

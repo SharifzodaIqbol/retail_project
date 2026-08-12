@@ -8,6 +8,7 @@ import (
 	"retail-managment-system/internal/auth"
 	"retail-managment-system/internal/domain"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -32,6 +33,11 @@ func (h *Handler) createUser(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+	// ИСПРАВЛЕНО: обрезаем пробелы по краям логина при создании сотрудника —
+	// та же логика, что и в register()/login(), иначе через этот эндпоинт
+	// можно было создать логин с невидимыми пробелами, который потом не
+	// пройдёт по LOWER()-сравнению при PIN-логине.
+	req.Username = strings.TrimSpace(req.Username)
 
 	ownerCompanyID, exists := c.Get("company_id")
 	if !exists {
@@ -124,10 +130,6 @@ func (h *Handler) createUser(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok"})
 }
 
-// deleteUser — удаление сотрудника.
-// ИСПРАВЛЕНО (IDOR): раньше удаление шло по глобальному id без проверки
-// company_id — владелец одной компании мог удалить сотрудника другой
-// компании, подобрав числовой id.
 func (h *Handler) deleteUser(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 	id, _ := strconv.Atoi(c.Param("id"))
@@ -177,13 +179,6 @@ func (h *Handler) setUserPin(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok"})
 }
 
-// pinLogin — вход продавца через PIN в режиме терминала.
-// ИСПРАВЛЕНО: PIN проверяется в паре с company_id (через GetByIDAndCompany),
-// а не по голому user_id. ДОБАВЛЕНО: rate limiting — PIN это всего 4 цифры
-// (10000 комбинаций), без лимита его можно подобрать скриптом за разумное
-// время. Теперь после 5 неудачных попыток на пару (IP+company_id+user_id)
-// вход блокируется на 15 минут, плюс есть более мягкий лимит по самому IP
-// (от перебора чужих user_id с одного устройства).
 func (h *Handler) pinLogin(c *gin.Context) {
 	var req domain.PinLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

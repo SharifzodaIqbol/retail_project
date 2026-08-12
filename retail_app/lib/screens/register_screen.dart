@@ -68,7 +68,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             borderRadius: BorderRadius.circular(10),
           ),
           content: const Text(
-            'Хатои бақайдгирӣ. Шояд ном банд бошад, шумо метавонед номи дигар интихоб кунед.',
+            'Хатои бақайдгирӣ. Шояд логин банд бошад, шумо метавонед логини дигар интихоб кунед.',
           ),
         ),
       );
@@ -137,7 +137,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   icon: Icons.storefront_outlined,
                                   textInputAction: TextInputAction.next,
                                   validator: (v) => v!.trim().isEmpty
-                                      ? 'Номро ворид кунед'
+                                      ? 'Логинро ворид кунед'
                                       : null,
                                 ),
 
@@ -151,11 +151,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 const SizedBox(height: 12),
                                 _AuthTextField(
                                   controller: _usernameController,
-                                  hint: 'Номи соҳибкор',
+                                  hint: 'Логини соҳибкор',
                                   icon: Icons.person_outline,
                                   textInputAction: TextInputAction.next,
                                   validator: (v) => v!.trim().isEmpty
-                                      ? 'Номатонро ворид кунед'
+                                      ? 'Логинатонро ворид кунед'
                                       : null,
                                 ),
                                 const SizedBox(height: 14),

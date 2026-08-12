@@ -92,7 +92,7 @@ class _RateLimitBannerState extends State<RateLimitBanner> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Повторите через $_formatted',
+                  'Такрор кунед баъд аз $_formatted',
                   style: const TextStyle(
                     color: Color(0xFFC0392B),
                     fontSize: 12.5,

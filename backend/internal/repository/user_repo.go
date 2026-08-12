@@ -20,17 +20,22 @@ func NewUserRepository(db *pgxpool.Pool) *UserRepository {
 
 // GetByUsername — ищет пользователя глобально (для логина owner'а).
 // Возвращает ТОЛЬКО owner'ов — продавцы через логин/пароль не входят.
+// ИСПРАВЛЕНО: сравнение через LOWER() — логин регистронезависимый
+// (username в БД хранится с оригинальным регистром, для отображения в UI).
 func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
 	var u domain.User
-	query := `SELECT id, company_id, username, password_hash, role, COALESCE(current_shop_id, 0) FROM users WHERE username = $1 AND role = 'owner'`
+	query := `SELECT id, company_id, username, password_hash, role, COALESCE(current_shop_id, 0)
+	          FROM users WHERE LOWER(username) = LOWER($1) AND role = 'owner'`
 	err := r.db.QueryRow(ctx, query, username).Scan(&u.ID, &u.CompanyID, &u.Username, &u.PasswordHash, &u.Role, &u.CurrentShopID)
 	return &u, err
 }
 
 // GetByUsernameAndCompany — поиск с учётом company_id (нужен для PIN-логина)
+// ИСПРАВЛЕНО: сравнение через LOWER() — та же логика, что и в GetByUsername.
 func (r *UserRepository) GetByUsernameAndCompany(ctx context.Context, username string, companyID int) (*domain.User, error) {
 	var u domain.User
-	query := `SELECT id, company_id, username, password_hash, COALESCE(pin_hash,''), role FROM users WHERE username = $1 AND company_id = $2`
+	query := `SELECT id, company_id, username, password_hash, COALESCE(pin_hash,''), role
+	          FROM users WHERE LOWER(username) = LOWER($1) AND company_id = $2`
 	err := r.db.QueryRow(ctx, query, username, companyID).Scan(
 		&u.ID, &u.CompanyID, &u.Username, &u.PasswordHash, &u.PinHash, &u.Role,
 	)
