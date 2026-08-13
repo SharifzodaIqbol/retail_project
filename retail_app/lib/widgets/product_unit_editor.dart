@@ -208,44 +208,27 @@ class _NewUnitCardState extends State<NewUnitCard> {
   }
 }
 
-/// Карточка УЖЕ существующей доп. единицы продажи — редактируется и
-/// сохраняется/удаляется независимо от основной формы, своей собственной
-/// кнопкой (сразу через API).
-class ExistingUnitCard extends StatefulWidget {
+/// Строка УЖЕ существующей доп. единицы продажи — контроллеры живут здесь
+/// (а не внутри карточки), чтобы родительский диалог мог прочитать текущие
+/// значения и решить, что именно изменилось, когда нажата ОБЩАЯ кнопка
+/// "Захира кардан". Своей кнопки сохранения у карточки больше нет —
+/// см. ExistingUnitCard.
+class ExistingUnitRow {
   final ProductUnit unit;
-  final Future<String?> Function(Map<String, dynamic> data) onSave;
-  final Future<String?> Function() onDelete;
-  final Future<String?> Function() onGenerateBarcode;
-  final VoidCallback onDeleted;
+  late final TextEditingController labelController;
+  late final TextEditingController factorController;
+  late final TextEditingController priceController;
+  late final TextEditingController barcodeController;
 
-  const ExistingUnitCard({
-    super.key,
-    required this.unit,
-    required this.onSave,
-    required this.onDelete,
-    required this.onGenerateBarcode,
-    required this.onDeleted,
-  });
-
-  @override
-  State<ExistingUnitCard> createState() => _ExistingUnitCardState();
-}
-
-class _ExistingUnitCardState extends State<ExistingUnitCard> {
-  late final _labelCtrl = TextEditingController(text: widget.unit.label);
-  late final _factorCtrl = TextEditingController(
-    text: _trimNum(widget.unit.conversionFactor),
-  );
-  late final _priceCtrl = TextEditingController(
-    text: widget.unit.price.toStringAsFixed(2),
-  );
-  late final _barcodeCtrl = TextEditingController(
-    text: widget.unit.barcode ?? '',
-  );
-
-  bool _saving = false;
-  bool _deleting = false;
-  bool _generating = false;
+  ExistingUnitRow(this.unit)
+    : labelController = TextEditingController(text: unit.label),
+      factorController = TextEditingController(
+        text: _trimNum(unit.conversionFactor),
+      ),
+      priceController = TextEditingController(
+        text: unit.price.toStringAsFixed(2),
+      ),
+      barcodeController = TextEditingController(text: unit.barcode ?? '');
 
   static String _trimNum(double v) {
     if (v == v.truncateToDouble()) return v.toInt().toString();
@@ -254,6 +237,75 @@ class _ExistingUnitCardState extends State<ExistingUnitCard> {
 
   double? _parseNum(String raw) =>
       double.tryParse(raw.trim().replaceAll(',', '.'));
+
+  /// true, если поля отличаются от исходных значений юнита — используется,
+  /// чтобы не слать PUT на сервер зря, если ничего не поменяли.
+  bool get isChanged {
+    final label = labelController.text.trim();
+    final factor = _parseNum(factorController.text);
+    final price = _parseNum(priceController.text);
+    final barcode = barcodeController.text.trim().isEmpty
+        ? null
+        : barcodeController.text.trim();
+    return label != unit.label ||
+        factor != unit.conversionFactor ||
+        price != unit.price ||
+        barcode != unit.barcode;
+  }
+
+  /// null, если поля некорректны (пустое имя/коэффициент/цена) — вызывающий
+  /// код должен считать это ошибкой ввода, а не "нечего сохранять".
+  Map<String, dynamic>? toUpdateData() {
+    final label = labelController.text.trim();
+    if (label.isEmpty) return null;
+    final factor = _parseNum(factorController.text);
+    if (factor == null || factor <= 0) return null;
+    final price = _parseNum(priceController.text);
+    if (price == null || price < 0) return null;
+    return {
+      'label': label,
+      'conversion_factor': factor,
+      'price': price,
+      'barcode': barcodeController.text.trim().isEmpty
+          ? null
+          : barcodeController.text.trim(),
+    };
+  }
+
+  void dispose() {
+    labelController.dispose();
+    factorController.dispose();
+    priceController.dispose();
+    barcodeController.dispose();
+  }
+}
+
+/// Карточка уже существующей доп. единицы продажи. Только редактирование
+/// полей "на месте" — сохранение и удаление происходят централизованно,
+/// когда нажата общая кнопка "Захира кардан" в родительском диалоге.
+/// "Нест кардан" здесь лишь убирает карточку из списка (родитель запомнит
+/// unit.id и удалит его на сервере при сохранении); реальный API-вызов
+/// происходит только после подтверждения общего сохранения.
+class ExistingUnitCard extends StatefulWidget {
+  final ExistingUnitRow row;
+  final Future<String?> Function() onGenerateBarcode;
+  final VoidCallback onRemove;
+  final VoidCallback onChanged;
+
+  const ExistingUnitCard({
+    super.key,
+    required this.row,
+    required this.onGenerateBarcode,
+    required this.onRemove,
+    required this.onChanged,
+  });
+
+  @override
+  State<ExistingUnitCard> createState() => _ExistingUnitCardState();
+}
+
+class _ExistingUnitCardState extends State<ExistingUnitCard> {
+  bool _generating = false;
 
   Future<void> _generateBarcode() async {
     setState(() => _generating = true);
@@ -269,59 +321,17 @@ class _ExistingUnitCardState extends State<ExistingUnitCard> {
       );
       return;
     }
-    setState(() => _barcodeCtrl.text = barcode);
+    widget.row.barcodeController.text = barcode;
+    widget.onChanged();
   }
 
-  Future<void> _save() async {
-    final label = _labelCtrl.text.trim();
-    if (label.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Номи воҳидро нависед')));
-      return;
-    }
-    final factor = _parseNum(_factorCtrl.text);
-    if (factor == null || factor <= 0) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Коэффисиенти нодуруст')));
-      return;
-    }
-    final price = _parseNum(_priceCtrl.text);
-    if (price == null || price < 0) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Нархи нодуруст')));
-      return;
-    }
-
-    setState(() => _saving = true);
-    final error = await widget.onSave({
-      'label': label,
-      'conversion_factor': factor,
-      'price': price,
-      'barcode': _barcodeCtrl.text.trim().isEmpty
-          ? null
-          : _barcodeCtrl.text.trim(),
-    });
-    if (!mounted) return;
-    setState(() => _saving = false);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(error ?? 'Воҳид нигоҳ дошта шуд!'),
-        backgroundColor: error == null ? Colors.green : Colors.red,
-      ),
-    );
-  }
-
-  Future<void> _delete() async {
+  Future<void> _remove() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Нест кардани воҳид'),
         content: Text(
-          '"${widget.unit.label}"-ро нест кардан мехоҳед? Ин амалро баргардонидан мумкин нест.',
+          '"${widget.row.unit.label}"-ро нест кардан мехоҳед? Тағйирот бо тугмаи "Захира кардан" татбиқ мешавад.',
         ),
         actions: [
           TextButton(
@@ -336,33 +346,12 @@ class _ExistingUnitCardState extends State<ExistingUnitCard> {
         ],
       ),
     );
-    if (confirmed != true) return;
-
-    setState(() => _deleting = true);
-    final error = await widget.onDelete();
-    if (!mounted) return;
-
-    if (error == null) {
-      widget.onDeleted();
-    } else {
-      setState(() => _deleting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error), backgroundColor: Colors.red),
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    _labelCtrl.dispose();
-    _factorCtrl.dispose();
-    _priceCtrl.dispose();
-    _barcodeCtrl.dispose();
-    super.dispose();
+    if (confirmed == true) widget.onRemove();
   }
 
   @override
   Widget build(BuildContext context) {
+    final row = widget.row;
     return Card(
       margin: const EdgeInsets.only(top: 10),
       child: Padding(
@@ -373,59 +362,50 @@ class _ExistingUnitCardState extends State<ExistingUnitCard> {
               children: [
                 Expanded(
                   child: TextField(
-                    controller: _labelCtrl,
+                    controller: row.labelController,
                     decoration: const InputDecoration(labelText: 'Ном'),
+                    onChanged: (_) => widget.onChanged(),
                   ),
                 ),
-                _deleting
-                    ? const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : IconButton(
-                        tooltip: 'Нест кардан',
-                        icon: const Icon(
-                          Icons.delete_outline,
-                          color: Colors.red,
-                        ),
-                        onPressed: _delete,
-                      ),
+                IconButton(
+                  tooltip: 'Нест кардан',
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  onPressed: _remove,
+                ),
               ],
             ),
             Row(
               children: [
                 Expanded(
                   child: TextField(
-                    controller: _factorCtrl,
+                    controller: row.factorController,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
                     decoration: const InputDecoration(
                       labelText: 'Чанд дона дар дохил',
                     ),
+                    onChanged: (_) => widget.onChanged(),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: TextField(
-                    controller: _priceCtrl,
+                    controller: row.priceController,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
                     decoration: const InputDecoration(
                       labelText: 'Нархи ин воҳид',
                     ),
+                    onChanged: (_) => widget.onChanged(),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             TextField(
-              controller: _barcodeCtrl,
+              controller: row.barcodeController,
               decoration: InputDecoration(
                 labelText: 'Штрихкоди ин воҳид (ихтиёрӣ)',
                 prefixIcon: const Icon(Icons.qr_code),
@@ -460,34 +440,20 @@ class _ExistingUnitCardState extends State<ExistingUnitCard> {
                           ),
                         );
                         if (scannedCode != null) {
-                          setState(() => _barcodeCtrl.text = scannedCode);
+                          row.barcodeController.text = scannedCode;
+                          widget.onChanged();
                         }
                       },
                     ),
                   ],
                 ),
               ),
-              onChanged: (_) => setState(() {}),
+              onChanged: (_) => widget.onChanged(),
             ),
-            if (_barcodeCtrl.text.trim().isNotEmpty) ...[
+            if (row.barcodeController.text.trim().isNotEmpty) ...[
               const SizedBox(height: 8),
-              BarcodePreviewCard(data: _barcodeCtrl.text.trim()),
+              BarcodePreviewCard(data: row.barcodeController.text.trim()),
             ],
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _saving ? null : _save,
-                icon: _saving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.save_outlined, size: 18),
-                label: const Text('Нигоҳ доштани ин воҳид'),
-              ),
-            ),
           ],
         ),
       ),

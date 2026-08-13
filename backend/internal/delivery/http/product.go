@@ -628,7 +628,7 @@ func (h *Handler) updateProduct(c *gin.Context) {
 				return
 			}
 			seller, _ := h.userRepo.GetByID(ctx, userID.(int))
-			h.tgBot.SendProductEditNotification(ownerChatID, seller.Username, p.Name, body.Reason)
+			h.tgBot.SendProductChangeNotification(ownerChatID, seller.Username, p.Name, nil, body.Reason)
 		}()
 	}
 
@@ -687,7 +687,7 @@ func (h *Handler) updateInventory(c *gin.Context) {
 				return
 			}
 			seller, _ := h.userRepo.GetByID(ctx, userID.(int))
-			h.tgBot.SendInventoryChangeNotification(ownerChatID, seller.Username, productName, input.AddStock, input.Reason)
+			h.tgBot.SendProductChangeNotification(ownerChatID, seller.Username, productName, &input.AddStock, input.Reason)
 		}()
 	}
 

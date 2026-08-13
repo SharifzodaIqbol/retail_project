@@ -201,32 +201,29 @@ func (b *Bot) SendDailyReport(chatID int64, totalDay float64, salesCount int) {
 	}
 }
 
-func (b *Bot) SendProductEditNotification(chatID int64, sellerName, productName, reason string) {
+func (b *Bot) SendProductChangeNotification(chatID int64, sellerName, productName string, addStock *float64, reason string) {
 	if sellerName == "" {
 		sellerName = "Номаълум"
 	}
-	msg := fmt.Sprintf(
-		"✏️ **Тағйироти маълумоти маҳсулот**\n👤 Фурушанда: %s\n🏷 Маҳсулот: %s\n📝 Сабаб: %s",
-		sellerName, productName, reason,
-	)
+
+	var msg string
+	if addStock != nil {
+		sign := "+"
+		if *addStock < 0 {
+			sign = ""
+		}
+		msg = fmt.Sprintf(
+			"📦 **Тағйироти склад**\n👤 Фурушанда: %s\n🏷 Маҳсулот: %s\n🔢 Тағйирот: %s%g\n📝 Сабаб: %s",
+			sellerName, productName, sign, *addStock, reason,
+		)
+	} else {
+		msg = fmt.Sprintf(
+			"✏️ **Тағйироти маълумоти маҳсулот**\n👤 Фурушанда: %s\n🏷 Маҳсулот: %s\n📝 Сабаб: %s",
+			sellerName, productName, reason,
+		)
+	}
+
 	if _, err := b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown); err != nil {
 		logger.L.Error("Telegram: не удалось отправить уведомление об изменении товара", "chat_id", chatID, "product", productName, "error", err.Error())
-	}
-}
-
-func (b *Bot) SendInventoryChangeNotification(chatID int64, sellerName, productName string, addStock float64, reason string) {
-	sign := "+"
-	if addStock < 0 {
-		sign = ""
-	}
-	if sellerName == "" {
-		sellerName = "Номаълум"
-	}
-	msg := fmt.Sprintf(
-		"📦 **Тағйироти склад**\n👤 Фурушанда: %s\n🏷 Маҳсулот: %s\n🔢 Тағйирот: %s%g\n📝 Сабаб: %s",
-		sellerName, productName, sign, addStock, reason,
-	)
-	if _, err := b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown); err != nil {
-		logger.L.Error("Telegram: не удалось отправить уведомление об изменении склада", "chat_id", chatID, "product", productName, "error", err.Error())
 	}
 }
