@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 
 class UsersScreen extends StatefulWidget {
@@ -30,104 +31,159 @@ class _UsersScreenState extends State<UsersScreen> {
 
   /// Диалог добавления сотрудника.
   /// Продавцы входят ТОЛЬКО через PIN — пароль не нужен.
-  void _showAddUserDialog() {
+  ///
+  /// Ограничение: не более [_maxSellersPerShop] продавцов на один магазин.
+  /// Кнопка "Сохтан" блокируется заранее (тот же паттерн, что и лимит
+  /// доп. единиц в add_product_screen), а не просто показывает ошибку
+  /// снизу экрана — иначе владелец не понимает, почему создание не удалось.
+  static const int _maxSellersPerShop = 5;
+
+  void _showAddUserDialog() async {
     final usernameCtrl = TextEditingController();
     final pinCtrl = TextEditingController();
     String role = 'seller';
+    String? formError;
+
+    final prefs = await SharedPreferences.getInstance();
+    final currentShopId = prefs.getInt('shop_id') ?? 0;
+    final sellersInShop = _users
+        .where(
+          (u) => u['role'] == 'seller' && (u['shop_id'] ?? 0) == currentShopId,
+        )
+        .length;
+    if (!mounted) return;
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Коргари нав'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: usernameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Номи коргар',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              // PIN — обязателен для seller, видим всегда
-              TextField(
-                controller: pinCtrl,
-                keyboardType: TextInputType.number,
-                maxLength: 4,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'PIN-код (4 рақам)',
-                  border: OutlineInputBorder(),
-                  helperText: 'Фурӯшанда тавассути PIN ворид мешавад',
-                ),
-              ),
-              const SizedBox(height: 4),
-              DropdownButtonFormField<String>(
-                value: role,
-                decoration: const InputDecoration(
-                  labelText: 'Вазифа',
-                  border: OutlineInputBorder(),
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'seller', child: Text('Фурӯшанда')),
+        builder: (context, setDialogState) {
+          final limitReached = sellersInShop >= _maxSellersPerShop;
+          return AlertDialog(
+            title: const Text('Коргари нав'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (limitReached)
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        'Дар ин мағоза аллакай ҳадди аксар $_maxSellersPerShop '
+                        'фурӯшанда ҳаст. Барои иловаи нав, аввал каси дигарро '
+                        'хориҷ кунед.',
+                        style: const TextStyle(
+                          color: Colors.orange,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  TextField(
+                    controller: usernameCtrl,
+                    enabled: !limitReached,
+                    decoration: const InputDecoration(
+                      labelText: 'Номи коргар',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // PIN — обязателен для seller, видим всегда
+                  TextField(
+                    controller: pinCtrl,
+                    enabled: !limitReached,
+                    keyboardType: TextInputType.number,
+                    maxLength: 4,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'PIN-код (4 рақам)',
+                      border: OutlineInputBorder(),
+                      helperText: 'Фурӯшанда тавассути PIN ворид мешавад',
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  DropdownButtonFormField<String>(
+                    value: role,
+                    decoration: const InputDecoration(
+                      labelText: 'Вазифа',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'seller',
+                        child: Text('Фурӯшанда'),
+                      ),
+                    ],
+                    onChanged: limitReached
+                        ? null
+                        : (v) => setDialogState(() => role = v!),
+                  ),
+                  if (formError != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      formError!,
+                      style: const TextStyle(color: Colors.red, fontSize: 13),
+                    ),
+                  ],
                 ],
-                onChanged: (v) => setDialogState(() => role = v!),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Бекор кардан'),
+              ),
+              ElevatedButton(
+                onPressed: limitReached
+                    ? null
+                    : () async {
+                        if (usernameCtrl.text.isEmpty) return;
+                        if (pinCtrl.text.length != 4) {
+                          setDialogState(
+                            () => formError = 'PIN бояд 4 рақам бошад',
+                          );
+                          return;
+                        }
+                        setDialogState(() => formError = null);
+                        // Seller создаётся без пароля — только с PIN
+                        final error = await _api.createUserWithPin(
+                          usernameCtrl.text.trim(),
+                          '', // пароль пустой — бэкенд сам разберётся по роли
+                          role,
+                          pin: pinCtrl.text,
+                        );
+                        if (error == null && mounted) {
+                          Navigator.pop(context);
+                          _loadUsers();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Корманд илова карда шуд!'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        } else if (mounted) {
+                          setDialogState(
+                            () => formError =
+                                error ??
+                                'Хато. Шояд ном аллакай гирифта шудааст.',
+                          );
+                        }
+                      },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF4F6EF7),
+                ),
+                child: const Text(
+                  'Сохтан',
+                  style: TextStyle(color: Colors.white),
+                ),
               ),
             ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Бекор кардан'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (usernameCtrl.text.isEmpty) return;
-                if (pinCtrl.text.length != 4) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('PIN бояд 4 рақам бошад')),
-                  );
-                  return;
-                }
-                // Seller создаётся без пароля — только с PIN
-                final ok = await _api.createUserWithPin(
-                  usernameCtrl.text.trim(),
-                  '', // пароль пустой — бэкенд сам разберётся по роли
-                  role,
-                  pin: pinCtrl.text,
-                );
-                if (ok && mounted) {
-                  Navigator.pop(context);
-                  _loadUsers();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Корманд илова карда шуд!'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                } else if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Хато. Шояд ном аллакай гирифта шудааст. Шумо метавонед дигар ном истифода баред.',
-                      ),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4F6EF7),
-              ),
-              child: const Text(
-                'Сохтан',
-                style: TextStyle(color: Colors.white),
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }

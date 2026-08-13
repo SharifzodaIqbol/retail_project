@@ -15,12 +15,9 @@ class CartItem {
   // используется для списания склада.
   double quantity;
 
-  CartItem({
-    required this.product,
-    ProductUnit? unit,
-    double? quantity,
-  }) : selectedUnit = unit ?? product.baseUnit,
-       quantity = quantity ?? 1;
+  CartItem({required this.product, ProductUnit? unit, double? quantity})
+    : selectedUnit = unit ?? product.baseUnit,
+      quantity = quantity ?? 1;
 }
 
 class CartProvider with ChangeNotifier {

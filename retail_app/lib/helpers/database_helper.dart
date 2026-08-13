@@ -224,14 +224,6 @@ class DatabaseHelper {
     }
 
     if (oldVersion < 5) {
-      // Раньше на product_cache(barcode) висел ПОЛНЫЙ уникальный индекс.
-      // Backend разрешил barcode = NULL, на клиенте он превращается в ''
-      // (см. _normalizeProduct), и если товаров без штрихкода становилось
-      // больше одного, каждый следующий такой товар при upsert (INSERT ...
-      // ConflictAlgorithm.replace) конфликтовал по индексу с предыдущим и
-      // ЗАМЕЩАЛ его — из офлайн-кэша пропадали все товары без штрихкода,
-      // кроме последнего сохранённого. Меняем индекс на частичный, чтобы
-      // уникальность штрихкода требовалась только когда он реально задан.
       await db.execute('DROP INDEX IF EXISTS idx_product_barcode');
       await db.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_product_barcode ON product_cache(barcode) WHERE barcode != ''",

@@ -534,6 +534,97 @@ class ApiService {
     }
   }
 
+  /// Редактирует уже существующую единицу продажи (её название, коэффициент
+  /// пересчёта, цену, штрихкод). Возвращает null при успехе, иначе — текст
+  /// ошибки с сервера.
+  Future<String?> updateProductUnit(
+    int productId,
+    int unitId,
+    Map<String, dynamic> unitData,
+  ) async {
+    try {
+      final response = await http
+          .put(
+            Uri.parse('$baseUrl/api/products/$productId/units/$unitId'),
+            headers: await _getHeaders(),
+            body: jsonEncode(unitData),
+          )
+          .timeout(const Duration(seconds: 15));
+      _handleAuthErrors(response.statusCode);
+      if (response.statusCode == 200) return null;
+      try {
+        final body = jsonDecode(response.body);
+        final msg = body['error'] ?? body['message'] ?? body['detail'];
+        if (msg != null) return msg.toString();
+      } catch (_) {}
+      return 'Хатогӣ: ${response.statusCode}';
+    } on TimeoutException {
+      return 'Вақт тамом шуд. Пайвастшавии интернетро санҷед';
+    } catch (e) {
+      return 'Хатогии пайвастшавӣ: $e';
+    }
+  }
+
+  /// Удаляет доп. единицу продажи товара (базовую единицу удалить нельзя —
+  /// сервер это тоже проверяет). Возвращает null при успехе, иначе — текст
+  /// ошибки с сервера.
+  Future<String?> deleteProductUnit(int productId, int unitId) async {
+    try {
+      final response = await http
+          .delete(
+            Uri.parse('$baseUrl/api/products/$productId/units/$unitId'),
+            headers: await _getHeaders(),
+          )
+          .timeout(const Duration(seconds: 15));
+      _handleAuthErrors(response.statusCode);
+      if (response.statusCode == 200) return null;
+      try {
+        final body = jsonDecode(response.body);
+        final msg = body['error'] ?? body['message'] ?? body['detail'];
+        if (msg != null) return msg.toString();
+      } catch (_) {}
+      return 'Хатогӣ: ${response.statusCode}';
+    } on TimeoutException {
+      return 'Вақт тамом шуд. Пайвастшавии интернетро санҷед';
+    } catch (e) {
+      return 'Хатогии пайвастшавӣ: $e';
+    }
+  }
+
+  /// Редактирует карточку товара (название, штрихкод, цены, базовую единицу
+  /// измерения). НЕ меняет остаток склада — для этого используется
+  /// [updateInventory]. Возвращает null при успехе, иначе — текст ошибки.
+  Future<String?> updateProduct(
+    int id,
+    Map<String, dynamic> productData, {
+    String? reason,
+  }) async {
+    try {
+      final response = await http
+          .put(
+            Uri.parse('$baseUrl/api/products/$id'),
+            headers: await _getHeaders(),
+            body: jsonEncode({
+              ...productData,
+              if (reason != null && reason.isNotEmpty) 'reason': reason,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+      _handleAuthErrors(response.statusCode);
+      if (response.statusCode == 200) return null;
+      try {
+        final body = jsonDecode(response.body);
+        final msg = body['error'] ?? body['message'] ?? body['detail'];
+        if (msg != null) return msg.toString();
+      } catch (_) {}
+      return 'Хатогӣ: ${response.statusCode}';
+    } on TimeoutException {
+      return 'Вақт тамом шуд. Пайвастшавии интернетро санҷед';
+    } catch (e) {
+      return 'Хатогии пайвастшавӣ: $e';
+    }
+  }
+
   /// [barcode] — штрихкод товара (если есть), нужен ТОЛЬКО чтобы после
   /// успешного обновления сразу освежить его в локальном кэше кассы
   /// (product_cache) — см. комментарий ниже. На сам PATCH-запрос никак
@@ -817,11 +908,14 @@ class ApiService {
   }
 
   Future<bool> createUser(String username, String password, String role) async {
-    return createUserWithPin(username, password, role);
+    final err = await createUserWithPin(username, password, role);
+    return err == null;
   }
 
-  /// Создание сотрудника с опциональным PIN
-  Future<bool> createUserWithPin(
+  /// Создание сотрудника с опциональным PIN.
+  /// Возвращает null при успехе, иначе — текст ошибки с сервера
+  /// (например, "В этом магазине уже максимум продавцов (5)...").
+  Future<String?> createUserWithPin(
     String username,
     String password,
     String role, {
@@ -842,9 +936,17 @@ class ApiService {
         body: jsonEncode(body),
       );
       _handleAuthErrors(response.statusCode);
-      return response.statusCode == 200;
+      if (response.statusCode == 200) {
+        return null; // успех
+      }
+      try {
+        final decoded = jsonDecode(response.body);
+        final msg = decoded['error'] ?? decoded['message'] ?? decoded['detail'];
+        if (msg != null) return msg.toString();
+      } catch (_) {}
+      return 'Хатогӣ: ${response.statusCode}';
     } catch (e) {
-      return false;
+      return 'Хатогии пайвастшавӣ: $e';
     }
   }
 

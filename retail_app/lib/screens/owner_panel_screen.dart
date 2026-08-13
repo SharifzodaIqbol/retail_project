@@ -322,6 +322,11 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
 
   // ─── Добавление сотрудника ────────────────────────────────────────────────
 
+  /// Не более этого числа продавцов на один магазин (проверяется и на
+  /// сервере — здесь только для того, чтобы блокировать кнопку заранее
+  /// и не заставлять владельца гадать, почему запрос не прошёл).
+  static const int _maxSellersPerShop = 5;
+
   void _showAddUserDialog() async {
     final usernameCtrl = TextEditingController();
     final pinCtrl = TextEditingController();
@@ -329,117 +334,159 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
     final prefs = await SharedPreferences.getInstance();
     int selectedShopId = prefs.getInt('shop_id') ?? 0;
     if (!mounted) return;
+    String? formError;
+
+    int sellersCountFor(int shopId) => _users
+        .where((u) => u['role'] == 'seller' && (u['shop_id'] ?? 0) == shopId)
+        .length;
 
     showDialog(
       context: context,
       builder: (_) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Фурӯшандаи нав'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Фурӯшандагон танҳо тавассути PIN ворид мешаванд парол лозим нест.',
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: usernameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Номи фурӯшанда',
-                    border: OutlineInputBorder(),
+        builder: (ctx, setDialogState) {
+          final limitReached =
+              sellersCountFor(selectedShopId) >= _maxSellersPerShop;
+          return AlertDialog(
+            title: const Text('Фурӯшандаи нав'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (limitReached)
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        'Дар ин мағоза аллакай $_maxSellersPerShop '
+                        'фурӯшанда ҳаст. Барои фурӯшандаи навро, сабт кардан '
+                        '1 фурӯшандаатонро хориҷ кунед.',
+                        style: const TextStyle(
+                          color: Colors.orange,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  const Text(
+                    'Фурӯшандагон танҳо тавассути PIN ворид мешаванд парол лозим нест.',
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: pinCtrl,
-                  keyboardType: TextInputType.number,
-                  maxLength: 4,
-                  obscureText: true,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(
-                    labelText: 'PIN-код (4 рақам)',
-                    border: OutlineInputBorder(),
-                    helperText:
-                        'Фурӯшанда инро ҳангоми ворид шудан ворид мекунад',
-                  ),
-                ),
-                if (shops.length > 1) ...[
                   const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    value: shops.any((s) => s['id'] == selectedShopId)
-                        ? selectedShopId
-                        : shops.first['id'],
+                  TextField(
+                    controller: usernameCtrl,
+                    enabled: !limitReached,
                     decoration: const InputDecoration(
-                      labelText: 'Мағоза',
+                      labelText: 'Номи фурӯшанда',
                       border: OutlineInputBorder(),
                     ),
-                    items: shops
-                        .map<DropdownMenuItem<int>>(
-                          (s) => DropdownMenuItem<int>(
-                            value: s['id'],
-                            child: Text(s['name'] ?? ''),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) setDialogState(() => selectedShopId = v);
-                    },
                   ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: pinCtrl,
+                    enabled: !limitReached,
+                    keyboardType: TextInputType.number,
+                    maxLength: 4,
+                    obscureText: true,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(
+                      labelText: 'PIN-код (4 рақам)',
+                      border: OutlineInputBorder(),
+                      helperText:
+                          'Фурӯшанда инро ҳангоми ворид шудан ворид мекунад',
+                    ),
+                  ),
+                  if (shops.length > 1) ...[
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<int>(
+                      value: shops.any((s) => s['id'] == selectedShopId)
+                          ? selectedShopId
+                          : shops.first['id'],
+                      decoration: const InputDecoration(
+                        labelText: 'Мағоза',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: shops
+                          .map<DropdownMenuItem<int>>(
+                            (s) => DropdownMenuItem<int>(
+                              value: s['id'],
+                              child: Text(s['name'] ?? ''),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) {
+                        if (v != null) {
+                          setDialogState(() {
+                            selectedShopId = v;
+                            formError = null;
+                          });
+                        }
+                      },
+                    ),
+                  ],
+                  if (formError != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      formError!,
+                      style: const TextStyle(color: Colors.red, fontSize: 13),
+                    ),
+                  ],
                 ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Бекор кардан'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4F6EF7),
               ),
-              onPressed: () async {
-                if (usernameCtrl.text.isEmpty) return;
-                if (pinCtrl.text.length != 4) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('PIN бояд 4 рақам бошад')),
-                  );
-                  return;
-                }
-                // Seller создаётся без пароля, только с PIN
-                final ok = await _api.createUserWithPin(
-                  usernameCtrl.text.trim(),
-                  '', // пароль пустой для seller'а
-                  'seller',
-                  pin: pinCtrl.text,
-                  shopId: selectedShopId,
-                );
-                if (!mounted) return;
-                if (ok) {
-                  Navigator.pop(ctx);
-                  _load();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Фурӯшанда илова карда шуд!'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Хато. Ин ном аллакай ҳаст?'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-              },
-              child: const Text('Насб', style: TextStyle(color: Colors.white)),
             ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Бекор кардан'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF4F6EF7),
+                ),
+                onPressed: limitReached
+                    ? null
+                    : () async {
+                        if (usernameCtrl.text.isEmpty) return;
+                        if (pinCtrl.text.length != 4) {
+                          setDialogState(
+                            () => formError = 'PIN бояд 4 рақам бошад',
+                          );
+                          return;
+                        }
+                        setDialogState(() => formError = null);
+                        // Seller создаётся без пароля, только с PIN
+                        final error = await _api.createUserWithPin(
+                          usernameCtrl.text.trim(),
+                          '', // пароль пустой для seller'а
+                          'seller',
+                          pin: pinCtrl.text,
+                          shopId: selectedShopId,
+                        );
+                        if (!mounted) return;
+                        if (error == null) {
+                          Navigator.pop(ctx);
+                          _load();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Фурӯшанда илова карда шуд!'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        } else {
+                          setDialogState(() => formError = error);
+                        }
+                      },
+                child: const Text(
+                  'Насб',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
