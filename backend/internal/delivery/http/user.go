@@ -72,6 +72,20 @@ func (h *Handler) createUser(c *gin.Context) {
 
 	// Для seller'а — пароль не нужен, только PIN
 	if req.Role == "seller" {
+		// ОГРАНИЧЕНИЕ: не более 5 продавцов на один магазин
+		const maxSellersPerShop = 5
+		sellersCount, err := h.userRepo.CountSellersByShop(context.Background(), targetShopID)
+		if err != nil {
+			logErr(c, err, "Создание продавца: ошибка подсчёта продавцов магазина", "shop_id", targetShopID)
+			c.JSON(500, gin.H{"error": "Ошибка"})
+			return
+		}
+		if sellersCount >= maxSellersPerShop {
+			logWarn(c, "Создание продавца: превышен лимит продавцов на магазин", "shop_id", targetShopID, "count", sellersCount)
+			c.JSON(400, gin.H{"error": fmt.Sprintf("В этом магазине уже максимум продавцов (%d). Удалите одного, чтобы добавить нового.", maxSellersPerShop)})
+			return
+		}
+
 		if req.Pin == "" {
 			c.JSON(400, gin.H{"error": "PIN обязателен для продавца (4 цифры)"})
 			return

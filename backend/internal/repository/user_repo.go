@@ -121,6 +121,15 @@ func (r *UserRepository) CreateWithPin(ctx context.Context, u domain.User) error
 }
 
 // CreateSeller — создание продавца без пароля (только PIN)
+// CountSellersByShop — сколько продавцов (role = 'seller') уже привязано
+// к указанному магазину. Используется для ограничения кол-ва продавцов
+// на один магазин (не более 5).
+func (r *UserRepository) CountSellersByShop(ctx context.Context, shopID int) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE shop_id = $1 AND role = 'seller'`, shopID).Scan(&count)
+	return count, err
+}
+
 func (r *UserRepository) CreateSeller(ctx context.Context, u domain.User) error {
 	query := `INSERT INTO users (username, password_hash, pin_hash, role, company_id, shop_id) VALUES ($1, '', $2, $3, $4, NULLIF($5, 0))`
 	_, err := r.db.Exec(ctx, query, u.Username, u.PinHash, u.Role, u.CompanyID, u.ShopID)
