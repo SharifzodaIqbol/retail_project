@@ -560,6 +560,81 @@ func (h *Handler) createProduct(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok", "id": productID})
 }
 
+// updateProduct — PUT /api/products/:id
+// Редактирует карточку товара: название, штрихкод, цены и базовую единицу
+// измерения (шт/кг). Остаток склада этим эндпоинтом не меняется — для
+// пополнения/списания используется updateInventory (там же ведётся история
+// и уведомление владельца, если меняет продавец).
+func (h *Handler) updateProduct(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	companyID := c.MustGet("company_id").(int)
+	shopID := c.MustGet("shop_id").(int)
+	role, _ := c.Get("role")
+	userID, _ := c.Get("user_id")
+
+	// Reason — обязателен только для продавца (как и в updateInventory):
+	// хозяин меняет карточку товара свободно, продавец обязан объяснить,
+	// зачем поменял название/штрихкод/единицу измерения — это уходит
+	// хозяину в Telegram.
+	var body struct {
+		domain.Product
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	p := body.Product
+
+	isSeller := role == "seller"
+	if isSeller && strings.TrimSpace(body.Reason) == "" {
+		c.JSON(400, gin.H{"error": "Укажите причину изменения товара"})
+		return
+	}
+
+	if p.Barcode != nil && strings.TrimSpace(*p.Barcode) == "" {
+		p.Barcode = nil
+	}
+
+	unit, err := normalizeUnit(p.Unit)
+	if err != nil {
+		logWarn(c, "Обновление товара: неверная единица измерения", "raw_unit", p.Unit, "error", err.Error())
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	p.Unit = unit
+
+	if err := h.productRepo.Update(context.Background(), id, companyID, shopID, p); err != nil {
+		if err == repository.ErrNotFound {
+			logWarn(c, "Обновление товара: товар не найден", "product_id", id, "company_id", companyID)
+			c.JSON(404, gin.H{"error": "Товар не найден"})
+			return
+		}
+		if isUniqueViolation(err) {
+			logWarn(c, "Обновление товара: штрихкод уже занят", "product_id", id, "company_id", companyID)
+			c.JSON(409, gin.H{"error": "Ин штрихкод аллакай истифода шудааст. Рамзи дигар созед"})
+			return
+		}
+		logErr(c, err, "Ошибка обновления товара", "product_id", id, "company_id", companyID)
+		c.JSON(500, gin.H{"error": "Ошибка обновления товара"})
+		return
+	}
+
+	if isSeller && h.tgBot != nil {
+		go func() {
+			ctx := context.Background()
+			ownerChatID, err := h.userRepo.GetOwnerChatID(ctx, companyID)
+			if err != nil || ownerChatID == 0 {
+				return
+			}
+			seller, _ := h.userRepo.GetByID(ctx, userID.(int))
+			h.tgBot.SendProductEditNotification(ownerChatID, seller.Username, p.Name, body.Reason)
+		}()
+	}
+
+	c.JSON(200, gin.H{"status": "ok"})
+}
+
 func (h *Handler) updateInventory(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	role, _ := c.Get("role")

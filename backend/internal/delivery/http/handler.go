@@ -99,6 +99,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 		api.GET("/products/generate-barcode", h.generateBarcode)
 		api.GET("/products", h.getAllProducts)
 		api.POST("/products", h.createProduct)
+		api.PUT("/products/:id", h.updateProduct)
 		api.POST("/products/import", h.importProducts)
 		api.PATCH("/products/:id/inventory", h.updateInventory)
 		api.DELETE("/products/:id", h.deleteProduct)

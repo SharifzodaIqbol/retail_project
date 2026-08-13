@@ -354,6 +354,48 @@ func (r *ProductRepository) UpdateInventory(ctx context.Context, id int, company
 	return ErrInsufficientStock
 }
 
+// Update — обновляет карточку товара (название, штрихкод, цены, базовую
+// единицу измерения). Остаток склада (stock) НЕ трогает — им управляет
+// отдельно UpdateInventory (пополнение/списание с уведомлением владельца),
+// чтобы редактирование карточки не могло случайно исказить складской учёт.
+// Заодно синхронизирует БАЗОВУЮ единицу продажи (product_units, is_base =
+// true) — её ярлык ("шт"/"кг"), цена и штрихкод должны оставаться зеркалом
+// этих же полей товара, иначе касса и карточка разойдутся.
+func (r *ProductRepository) Update(ctx context.Context, id, companyID, shopID int, p domain.Product) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `UPDATE products
+		SET name = $1, barcode = $2, buy_price = $3, sell_price = $4, unit = $5
+		WHERE id = $6 AND company_id = $7 AND shop_id = $8`,
+		p.Name, p.Barcode, p.BuyPrice, p.SellPrice, p.Unit, id, companyID, shopID,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	baseLabel := "шт"
+	if p.Unit == domain.UnitKg {
+		baseLabel = "кг"
+	}
+	_, err = tx.Exec(ctx, `UPDATE product_units
+		SET label = $1, price = $2, barcode = $3
+		WHERE product_id = $4 AND company_id = $5 AND is_base = true`,
+		baseLabel, p.SellPrice, p.Barcode, id, companyID,
+	)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
 func (r *ProductRepository) Delete(ctx context.Context, id int, companyID, shopID int) error {
 	tag, err := r.db.Exec(ctx, "DELETE FROM products WHERE id = $1 AND company_id = $2 AND shop_id = $3", id, companyID, shopID)
 	if err != nil {
