@@ -313,6 +313,24 @@ func (h *Handler) importProducts(c *gin.Context) {
 			continue
 		}
 
+		// Как и для основной единицы (см. выше), доп. единицам без
+		// штрихкода в файле нужно сгенерировать свой внутренний EAN-13 —
+		// иначе штрихкод получает только "шт", а "упаковка" и т.д. так и
+		// остаются без штрихкода.
+		for j := range extraUnits {
+			if extraUnits[j].Barcode == nil {
+				generated, genErr := generateUniqueBarcodeInMemory(impCtx)
+				if genErr != nil {
+					logErr(c, genErr, "Импорт товаров: не удалось сгенерировать штрихкод для доп. единицы", "row", rowNum, "label", extraUnits[j].Label)
+					result.Errors = append(result.Errors, domain.ProductImportError{
+						Row: rowNum, Message: fmt.Sprintf("Не удалось сгенерировать штрихкод для единицы %q, попробуйте ещё раз", extraUnits[j].Label),
+					})
+					continue
+				}
+				extraUnits[j].Barcode = &generated
+			}
+		}
+
 		// Вложенная транзакция (SAVEPOINT) на строку: если эта строка
 		// упадёт по ограничению БД, откатывается только она — остальные
 		// строки файла продолжают обрабатываться в той же внешней
