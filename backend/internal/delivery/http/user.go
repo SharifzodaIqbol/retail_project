@@ -246,11 +246,19 @@ func (h *Handler) pinLogin(c *gin.Context) {
 		return
 	}
 
+	refreshToken, errRefresh := h.issueRefreshToken(c, user.ID)
+	if errRefresh != nil {
+		logErr(c, errRefresh, "Ошибка выдачи refresh-токена при входе по PIN", "user_id", user.ID)
+		c.JSON(500, gin.H{"error": "Ошибка сервера"})
+		return
+	}
+
 	c.JSON(200, gin.H{
-		"token":    token,
-		"role":     user.Role,
-		"username": user.Username,
-		"shop_id":  user.ShopID,
+		"token":         token,
+		"refresh_token": refreshToken,
+		"role":          user.Role,
+		"username":      user.Username,
+		"shop_id":       user.ShopID,
 	})
 }
 

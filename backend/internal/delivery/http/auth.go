@@ -9,6 +9,7 @@ import (
 	"retail-managment-system/internal/domain"
 	"retail-managment-system/internal/repository"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -127,6 +128,13 @@ func (h *Handler) login(c *gin.Context) {
 		return
 	}
 
+	refreshToken, errRefresh := h.issueRefreshToken(c, user.ID)
+	if errRefresh != nil {
+		logErr(c, errRefresh, "Ошибка выдачи refresh-токена при логине", "user_id", user.ID)
+		c.JSON(500, gin.H{"error": "Ошибка сервера при создании сессии"})
+		return
+	}
+
 	// Получаем название компании для терминального режима
 	companyName := ""
 	if company, err := h.companyRepo.GetByID(context.Background(), user.CompanyID); err == nil {
@@ -135,6 +143,7 @@ func (h *Handler) login(c *gin.Context) {
 
 	c.JSON(200, gin.H{
 		"token":            token,
+		"refresh_token":    refreshToken,
 		"role":             user.Role,
 		"username":         user.Username,
 		"company_id":       user.CompanyID,
@@ -143,4 +152,77 @@ func (h *Handler) login(c *gin.Context) {
 		"shop_name":        shopName,
 		"needs_shop_setup": needsShopSetup,
 	})
+}
+
+
+func (h *Handler) issueRefreshToken(c *gin.Context, userID int) (string, error) {
+	raw, hash, err := auth.GenerateRefreshToken()
+	if err != nil {
+		return "", err
+	}
+	deviceID := c.GetHeader("X-Device-ID")
+	expiresAt := time.Now().Add(auth.RefreshTokenTTL)
+	if err := h.userRepo.CreateRefreshToken(context.Background(), userID, hash, deviceID, expiresAt); err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
+func (h *Handler) refresh(c *gin.Context) {
+	var req domain.RefreshRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Неверные данные"})
+		return
+	}
+
+	hash := auth.HashRefreshToken(req.RefreshToken)
+	user, err := h.userRepo.GetUserByValidRefreshToken(context.Background(), hash)
+	if err != nil {
+		logWarn(c, "Обновление токена: refresh-токен невалиден, истёк или отозван", "ip", c.ClientIP())
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Сессия истекла, нужно войти заново"})
+		return
+	}
+
+
+	if err := h.userRepo.RevokeRefreshToken(context.Background(), hash); err != nil {
+		logErr(c, err, "Обновление токена: не удалось отозвать старый refresh-токен", "user_id", user.ID)
+	}
+
+	shopID := user.ShopID
+	if user.Role == "owner" {
+		shopID = user.CurrentShopID
+	}
+
+	newAccessToken, errToken := auth.GenerateToken(user.ID, user.CompanyID, shopID, user.Role, os.Getenv("JWT_SECRET"))
+	if errToken != nil {
+		logErr(c, errToken, "Обновление токена: ошибка генерации нового JWT", "user_id", user.ID)
+		c.JSON(500, gin.H{"error": "Ошибка сервера"})
+		return
+	}
+
+	newRefreshToken, errRefresh := h.issueRefreshToken(c, user.ID)
+	if errRefresh != nil {
+		logErr(c, errRefresh, "Обновление токена: ошибка выдачи нового refresh-токена", "user_id", user.ID)
+		c.JSON(500, gin.H{"error": "Ошибка сервера"})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"token":         newAccessToken,
+		"refresh_token": newRefreshToken,
+		"role":          user.Role,
+		"shop_id":       shopID,
+	})
+}
+
+func (h *Handler) logout(c *gin.Context) {
+	var req domain.LogoutRequest
+	_ = c.ShouldBindJSON(&req)
+	if req.RefreshToken != "" {
+		hash := auth.HashRefreshToken(req.RefreshToken)
+		if err := h.userRepo.RevokeRefreshToken(context.Background(), hash); err != nil {
+			logErr(c, err, "Ошибка отзыва refresh-токена при выходе")
+		}
+	}
+	c.JSON(200, gin.H{"status": "ok"})
 }

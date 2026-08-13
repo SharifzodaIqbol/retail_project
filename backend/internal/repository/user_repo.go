@@ -18,10 +18,6 @@ func NewUserRepository(db *pgxpool.Pool) *UserRepository {
 	return &UserRepository{db: db}
 }
 
-// GetByUsername — ищет пользователя глобально (для логина owner'а).
-// Возвращает ТОЛЬКО owner'ов — продавцы через логин/пароль не входят.
-// ИСПРАВЛЕНО: сравнение через LOWER() — логин регистронезависимый
-// (username в БД хранится с оригинальным регистром, для отображения в UI).
 func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
 	var u domain.User
 	query := `SELECT id, company_id, username, password_hash, role, COALESCE(current_shop_id, 0)
@@ -30,8 +26,6 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*d
 	return &u, err
 }
 
-// GetByUsernameAndCompany — поиск с учётом company_id (нужен для PIN-логина)
-// ИСПРАВЛЕНО: сравнение через LOWER() — та же логика, что и в GetByUsername.
 func (r *UserRepository) GetByUsernameAndCompany(ctx context.Context, username string, companyID int) (*domain.User, error) {
 	var u domain.User
 	query := `SELECT id, company_id, username, password_hash, COALESCE(pin_hash,''), role
@@ -206,14 +200,6 @@ func (r *UserRepository) GetOwnerChatID(ctx context.Context, companyID int) (int
 	return chatID, err
 }
 
-// GetByChatID — ИСПРАВЛЕНО: раньше company_id не выбирался, из-за чего
-// у бота user.CompanyID всегда был 0 — все аналитические запросы из бота
-// уходили "в компанию 0" (и из-за отсутствия фильтрации раньше это не было
-// заметно, так как фильтрации не было вообще).
-// GetAllOwnersWithTelegram — все owner'ы всех компаний, у кого привязан Telegram.
-// Используется планировщиком ежедневных отчётов: отчёт должен уходить каждому
-// владельцу строго по ЕГО company_id, а не по одному "глобальному" company_id
-// (которого в многотенантной системе просто не существует).
 func (r *UserRepository) GetAllOwnersWithTelegram(ctx context.Context) ([]domain.User, error) {
 	query := `SELECT id, company_id, tg_chat_id FROM users WHERE role = 'owner' AND tg_chat_id IS NOT NULL`
 	rows, err := r.db.Query(ctx, query)
@@ -254,4 +240,47 @@ func (r *UserRepository) ClaimTgLinkToken(ctx context.Context, token string, cha
 		return nil, err
 	}
 	return &u, nil
+}
+
+func (r *UserRepository) CreateRefreshToken(ctx context.Context, userID int, tokenHash string, deviceID string, expiresAt time.Time) error {
+	_, err := r.db.Exec(ctx,
+		`INSERT INTO refresh_tokens (user_id, token_hash, device_id, expires_at)
+		 VALUES ($1, $2, NULLIF($3, ''), $4)`,
+		userID, tokenHash, deviceID, expiresAt,
+	)
+	return err
+}
+
+func (r *UserRepository) GetUserByValidRefreshToken(ctx context.Context, tokenHash string) (*domain.User, error) {
+	var u domain.User
+	query := `
+		SELECT u.id, u.company_id, u.username, u.role, COALESCE(u.current_shop_id, 0), COALESCE(u.shop_id, 0)
+		FROM refresh_tokens rt
+		JOIN users u ON u.id = rt.user_id
+		WHERE rt.token_hash = $1
+		  AND rt.revoked_at IS NULL
+		  AND rt.expires_at > NOW()
+	`
+	err := r.db.QueryRow(ctx, query, tokenHash).
+		Scan(&u.ID, &u.CompanyID, &u.Username, &u.Role, &u.CurrentShopID, &u.ShopID)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (r *UserRepository) RevokeRefreshToken(ctx context.Context, tokenHash string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = $1 AND revoked_at IS NULL`,
+		tokenHash,
+	)
+	return err
+}
+
+func (r *UserRepository) RevokeAllRefreshTokensForUser(ctx context.Context, userID int) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL`,
+		userID,
+	)
+	return err
 }

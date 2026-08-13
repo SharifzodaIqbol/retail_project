@@ -198,6 +198,20 @@ type TgLinkTokenResponse struct {
 	BotName string `json:"bot_name"`
 }
 
+// RefreshRequest — обмен refresh-токена на новую пару токенов (см.
+// POST /refresh). device_id опционален и нужен только для будущей
+// возможности "выйти на этом устройстве"/показа списка сессий —
+// сейчас используется только для записи в БД.
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
+// LogoutRequest — инвалидация refresh-токена на сервере при явном выходе,
+// чтобы токен нельзя было использовать повторно, даже если он не истёк.
+type LogoutRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
 type DailyStats struct {
 	Total float64 `json:"total"`
 	Count int     `json:"count"`

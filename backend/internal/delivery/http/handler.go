@@ -74,6 +74,13 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	// Публичные роуты
 	r.POST("/register", h.register)
 	r.POST("/login", h.login)
+	// Обновление access-токена по refresh-токену и явный выход — оба
+	// публичные (без AuthMiddleware): предъявленный refresh-токен сам
+	// по себе является доказательством личности, а access-токен к этому
+	// моменту вполне может быть уже просрочен (иначе не пришлось бы
+	// обновляться) и не пройдёт AuthMiddleware.
+	r.POST("/refresh", h.refresh)
+	r.POST("/logout", h.logout)
 
 	// Лёгкий health-check без авторизации и без обращения к БД —
 	// используется мобильным клиентом (ConnectivityService) для проверки

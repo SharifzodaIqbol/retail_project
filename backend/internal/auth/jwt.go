@@ -1,10 +1,17 @@
 package auth
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
+
+const AccessTokenTTL = 24 * time.Hour
+
+const RefreshTokenTTL = 30 * 24 * time.Hour
 
 // Claims — это данные, которые мы "зашиваем" в токен
 type Claims struct {
@@ -15,10 +22,6 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// GenerateToken создает новый JWT токен на 24 часа.
-// shopID — магазин, в контексте которого будет работать этот токен (0, если
-// у владельца ещё нет ни одного магазина — тогда доступ к данным магазина
-// не выдаётся, пока он не создаст первый).
 func GenerateToken(userID, companyID, shopID int, role, secret string) (string, error) {
 	claims := &Claims{
 		UserID:    userID,
@@ -26,10 +29,24 @@ func GenerateToken(userID, companyID, shopID int, role, secret string) (string, 
 		ShopID:    shopID,
 		Role:      role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(AccessTokenTTL)),
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(secret))
+}
+
+func GenerateRefreshToken() (raw string, hash string, err error) {
+	b := make([]byte, 32)
+	if _, err = rand.Read(b); err != nil {
+		return "", "", err
+	}
+	raw = hex.EncodeToString(b)
+	return raw, HashRefreshToken(raw), nil
+}
+
+func HashRefreshToken(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
 }
