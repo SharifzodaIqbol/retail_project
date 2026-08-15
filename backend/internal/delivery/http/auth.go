@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"retail-managment-system/internal/auth"
@@ -14,6 +15,35 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Границы длины логина/пароля/названия компании — те же, что на клиенте
+// (login_screen.dart / register_screen.dart), но здесь это настоящая
+// защита, а не просто UX: клиентские проверки легко обойти прямым
+// запросом к API.
+const (
+	minUsernameLength    = 3
+	maxUsernameLength    = 50
+	minPasswordLength    = 6
+	maxPasswordLength    = 72 // bcrypt всё равно молча обрезает после 72 байт
+	maxCompanyNameLength = 80
+)
+
+// validateCredentials проверяет длину логина и пароля после trim.
+// Возвращает пустую строку, если всё в порядке, иначе — сообщение для
+// клиента.
+func validateCredentials(username, password string) string {
+	switch {
+	case len(username) < minUsernameLength:
+		return fmt.Sprintf("Логин бояд ками-кам аз %d аломат иборат бошад", minUsernameLength)
+	case len(username) > maxUsernameLength:
+		return fmt.Sprintf("Логин набояд аз %d аломат зиёд бошад", maxUsernameLength)
+	case len(password) < minPasswordLength:
+		return fmt.Sprintf("Рамз бояд ками-кам аз %d аломат иборат бошад", minPasswordLength)
+	case len(password) > maxPasswordLength:
+		return fmt.Sprintf("Рамз набояд аз %d аломат зиёд бошад", maxPasswordLength)
+	}
+	return ""
+}
+
 func (h *Handler) register(c *gin.Context) {
 	var req domain.RegisterCompanyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -21,6 +51,22 @@ func (h *Handler) register(c *gin.Context) {
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
+	req.CompanyName = strings.TrimSpace(req.CompanyName)
+
+	if req.CompanyName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Номи мағоза холӣ буда наметавонад"})
+		return
+	}
+	if len(req.CompanyName) > maxCompanyNameLength {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Номи мағоза набояд аз %d аломат зиёд бошад", maxCompanyNameLength),
+		})
+		return
+	}
+	if msg := validateCredentials(req.Username, req.Password); msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+		return
+	}
 
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
@@ -64,6 +110,15 @@ func (h *Handler) login(c *gin.Context) {
 	}
 
 	req.Username = strings.TrimSpace(req.Username)
+
+	// Простая проверка длины — до обращения к лимитеру и БД, чтобы не
+	// тратить лимит попыток и запросы к БД на заведомо мусорный ввод
+	// (пустая строка, гигантская вставка и т.п.).
+	if len(req.Username) < minUsernameLength || len(req.Username) > maxUsernameLength ||
+		len(req.Password) == 0 || len(req.Password) > maxPasswordLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Логин ё рамз нодуруст аст"})
+		return
+	}
 
 	ip := c.ClientIP()
 	userKey := "login:" + ip + ":" + strings.ToLower(req.Username)
@@ -154,7 +209,6 @@ func (h *Handler) login(c *gin.Context) {
 	})
 }
 
-
 func (h *Handler) issueRefreshToken(c *gin.Context, userID int) (string, error) {
 	raw, hash, err := auth.GenerateRefreshToken()
 	if err != nil {
@@ -182,7 +236,6 @@ func (h *Handler) refresh(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Сессия истекла, нужно войти заново"})
 		return
 	}
-
 
 	if err := h.userRepo.RevokeRefreshToken(context.Background(), hash); err != nil {
 		logErr(c, err, "Обновление токена: не удалось отозвать старый refresh-токен", "user_id", user.ID)
