@@ -5,6 +5,7 @@ import '../services/auth_service.dart';
 import '../services/data_refresh_service.dart';
 import '../widgets/product_unit_editor.dart';
 import '../widgets/barcode_scanner.dart';
+import 'label_print_screen.dart';
 
 class InventoryScreen extends StatefulWidget {
   const InventoryScreen({super.key});
@@ -128,7 +129,7 @@ class _InventoryScreenState extends State<InventoryScreen>
   // мешавад; агар худи хозяин тағйир диҳад — сабаб лозим нест ва
   // огоҳинома фиристода намешавад (мувофиқи манфиати логика дар
   // backend: isSeller && h.tgBot != nil).
-  void _showRestockDialog(Product product) {
+  Future<bool?> _showRestockDialog(Product product) async {
     final amountCtrl = TextEditingController();
     final reasonCtrl = TextEditingController();
     final nameCtrl = TextEditingController(text: product.name);
@@ -164,7 +165,7 @@ class _InventoryScreenState extends State<InventoryScreen>
     _clearErrors();
     _saving = false;
 
-    showModalBottomSheet(
+    return await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
@@ -386,12 +387,6 @@ class _InventoryScreenState extends State<InventoryScreen>
                       ),
                     ],
                   ),
-                  Text(
-                    totalExtraUnits >= maxExtraUnits
-                        ? 'Ҳадди аксар $maxExtraUnits воҳиди иловагӣ барои як маҳсулот.'
-                        : 'Воҳиди навро ҳамроҳ бо тугмаи "Захира кардан" дар поён захира кунед.',
-                    style: const TextStyle(color: Colors.grey, fontSize: 12),
-                  ),
                   for (int i = 0; i < newUnits.length; i++)
                     NewUnitCard(
                       row: newUnits[i],
@@ -439,7 +434,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                                   for (final row in existingUnitRows) {
                                     row.dispose();
                                   }
-                                  Navigator.pop(context);
+                                  Navigator.pop(context, false);
                                 },
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 14),
@@ -559,7 +554,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                                     for (final row in existingUnitRows) {
                                       row.dispose();
                                     }
-                                    Navigator.pop(context);
+                                    Navigator.pop(context, false);
                                     return;
                                   }
 
@@ -690,13 +685,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                                   setSheetState(() => _saving = false);
 
                                   if (ok) {
-                                    Navigator.pop(context);
-                                    // updateInventory уже дёргает
-                                    // DataRefreshService.notifyProductChanged()
-                                    // — но если менялись только детали
-                                    // товара/доп. единицы (без изменения
-                                    // склада), это тоже нужно проверить
-                                    // (см. .whenComplete ниже).
+                                    Navigator.pop(context, true);
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         content: Text(
@@ -748,13 +737,7 @@ class _InventoryScreenState extends State<InventoryScreen>
           );
         },
       ),
-    ).whenComplete(() {
-      // Подстраховка: если диалог закрыли после изменений, которые НЕ
-      // затронули updateInventory (например, поменяли только доп.
-      // единицы или только название/штрихкод/воҳид), тот вызов сам не
-      // обновляет DataRefreshService — обновляем список вручную.
-      if (mounted) _loadProducts(reset: true);
-    });
+    );
   }
 
   // Удаление товара — только для владельца (сервер тоже это проверяет и
@@ -824,6 +807,18 @@ class _InventoryScreenState extends State<InventoryScreen>
         elevation: 0,
         actions: [
           IconButton(
+            icon: const Icon(Icons.print_outlined),
+            tooltip: 'Чопи этикетка',
+            onPressed: _products.isEmpty
+                ? null
+                : () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => LabelPrintScreen(products: _products),
+                    ),
+                  ),
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () => _loadProducts(reset: true),
           ),
@@ -875,7 +870,7 @@ class _InventoryScreenState extends State<InventoryScreen>
                   Padding(
                     padding: const EdgeInsets.only(left: 6),
                     child: _UnitFilterChip(
-                      label: 'Дона (шт)',
+                      label: 'Дона',
                       selected: _filterUnit == 'pcs',
                       onTap: () => setState(() => _filterUnit = 'pcs'),
                     ),
@@ -980,8 +975,14 @@ class _InventoryScreenState extends State<InventoryScreen>
                                           Icons.edit,
                                           color: Color(0xFF4F6EF7),
                                         ),
-                                        tooltip: 'Таҳрири маҳсулот',
-                                        onPressed: () => _showRestockDialog(p),
+                                        tooltip: 'Тағйири маҳсулот',
+                                        onPressed: () async {
+                                          final updated =
+                                              await _showRestockDialog(p);
+                                          if (updated == true && mounted) {
+                                            _loadProducts(reset: true);
+                                          }
+                                        },
                                       ),
                                       if (_role == 'owner')
                                         IconButton(

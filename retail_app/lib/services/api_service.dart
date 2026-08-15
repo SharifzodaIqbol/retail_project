@@ -117,18 +117,28 @@ class ApiService {
   ///  - 402 (Payment Required) — подписка компании истекла, кидаем на
   ///    экран "Обуна ба охир расид" (было и раньше, без изменений).
   ///
-  ///  - 401 (Unauthorized) — JWT-токен невалиден или истёк. Токен живёт
-  ///    ровно 24 часа (см. backend/internal/auth/jwt.go), а в приложении
-  ///    НЕТ автообновления токена — если сессия не была обновлена входом
-  ///    заново, токен тихо умирает, и любой следующий запрос падает с
-  ///    сырым "Неверный токен" от сервера. Раньше это сообщение просто
-  ///    показывалось как обычная ошибка на том экране, где кассир
-  ///    случайно на него наткнулся (например, при добавлении товара) —
-  ///    без объяснения и без выхода из тупика, кроме случайно
-  ///    угаданного "выйти и зайти заново". Теперь при 401 приложение
-  ///    само делает ровно это: тихо разлогинивает (чистит токен и кэш
-  ///    товаров — см. комментарий про clearProductCache в logout()) и
-  ///    возвращает на экран входа с понятным сообщением вместо тупика.
+  ///  - 401 (Unauthorized) — JWT-токен (access-токен) невалиден или истёк.
+  ///    Access-токен живёт недолго (1 час, см. auth.AccessTokenTTL на
+  ///    бэкенде) специально: он обновляется автоматически через
+  ///    refresh-токен (30 дней, см. _tryRefreshToken ниже), так что
+  ///    пользователь на активном устройстве этого не замечает и не
+  ///    вынужден логиниться заново каждый раз, когда access-токен истёк.
+  ///    Полный разлогин происходит, только если refresh-токена нет,
+  ///    он истёк (>30 дней бездействия) или был отозван (например,
+  ///    logout() на другом месте того же аккаунта) — тогда, как и
+  ///    раньше, тихо разлогиниваем и возвращаем на экран входа с понятным
+  ///    сообщением вместо голого "Неверный токен".
+  ///
+  /// ВАЖНО: этот метод по историческим причинам синхронный и не может
+  /// сам повторить исходный запрос. Он используется двумя способами:
+  ///  1) через `_handleAuthErrorsAsync`, который дожидается попытки
+  ///     обновления токена, прежде чем решить, разлогинивать или нет
+  ///     (используется в новых/обновлённых местах, см. authorizedRequest);
+  ///  2) напрямую в старых call-site — там при первом 401 будет
+  ///     запущено обновление токена в фоне, а сам запрос всё равно
+  ///     завершится ошибкой; повторный клик пользователя (или следующий
+  ///     фоновый запрос) уже отработает с новым токеном, так что
+  ///     разлогин по одиночному "неудачному" запросу не произойдёт.
   void _handleAuthErrors(int statusCode) {
     if (statusCode == 402) {
       navigatorKey.currentState?.pushAndRemoveUntil(
@@ -141,9 +151,77 @@ class ApiService {
     }
 
     if (statusCode == 401) {
-      if (_handlingSessionExpiry) return;
-      _handlingSessionExpiry = true;
-      unawaited(_forceReLoginAfterSessionExpiry());
+      unawaited(_handleUnauthorized());
+    }
+  }
+
+  /// То же самое, что и ветка 401 в [_handleAuthErrors], но с возможностью
+  /// дождаться результата — используется там, где вызывающий код готов
+  /// повторить запрос после успешного обновления токена.
+  ///
+  /// Возвращает true, если удалось молча обновить access-токен (значит,
+  /// исходный запрос можно повторить с новыми заголовками), и false, если
+  /// сессия действительно закончилась и пользователь был разлогинен.
+  Future<bool> _handleUnauthorized() async {
+    if (await _tryRefreshToken()) {
+      return true;
+    }
+    if (_handlingSessionExpiry) return false;
+    _handlingSessionExpiry = true;
+    await _forceReLoginAfterSessionExpiry();
+    return false;
+  }
+
+  // Защищает от одновременного обновления токена сразу с нескольких
+  // параллельных запросов (та же проблема, что и с _handlingSessionExpiry
+  // выше): без этого несколько запросов, поймавших 401 одновременно,
+  // сходили бы на /refresh параллельно, и из-за ротации на бэкенде
+  // (старый refresh-токен гасится сразу после выдачи новой пары) все,
+  // кроме первого, получили бы уже отозванный токен и ошибочно решили
+  // бы, что сессия умерла.
+  static Future<bool>? _refreshInFlight;
+
+  /// Пытается тихо обменять refresh-токен на новую пару токенов через
+  /// POST /refresh (см. backend/internal/delivery/http/auth.go). При
+  /// успехе сохраняет оба новых токена в SharedPreferences — все
+  /// дальнейшие запросы (через _getHeaders()) сразу начнут использовать
+  /// новый access-токен.
+  Future<bool> _tryRefreshToken() {
+    return _refreshInFlight ??= _doRefreshToken().whenComplete(() {
+      _refreshInFlight = null;
+    });
+  }
+
+  Future<bool> _doRefreshToken() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final refreshToken = prefs.getString('refresh_token');
+      if (refreshToken == null || refreshToken.isEmpty) return false;
+
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/refresh'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'refresh_token': refreshToken}),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 200) {
+        // Refresh-токен истёк/отозван/невалиден — реальный конец сессии.
+        return false;
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      await prefs.setString('jwt_token', data['token'] as String);
+      await prefs.setString('refresh_token', data['refresh_token'] as String);
+      return true;
+    } catch (_) {
+      // Сетевая ошибка при попытке обновления — не считаем это концом
+      // сессии (нет сети сейчас не значит, что refresh-токен невалиден).
+      // Исходный запрос всё равно завершится ошибкой сети как обычно,
+      // просто без разлогина — пользователь сможет попробовать снова,
+      // когда сеть вернётся.
+      return false;
     }
   }
 
@@ -160,6 +238,7 @@ class ApiService {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('jwt_token');
+      await prefs.remove('refresh_token');
       await prefs.remove('user_role');
       await prefs.remove('username');
       await prefs.remove('company_id');
@@ -733,6 +812,16 @@ class ApiService {
   ///   повторная идентичная отправка даст ту же ошибку, поэтому вызывающий
   ///   код не должен ретраить её молча.
   Future<SaleSendResult> sendSale(Map<String, dynamic> saleData) async {
+    // Если ConnectivityService уже знает, что сети нет (например, прошлая
+    // продажа секунду назад получила сетевую ошибку), не тратим 8 секунд
+    // на заведомо обречённый запрос — сразу уходим в офлайн-очередь, как
+    // это уже делают searchProductsByName/getProducts и другие методы.
+    // Фоновый пробник сам обнаружит восстановление связи и разблокирует
+    // обычный путь через HTTP.
+    if (!ConnectivityService.instance.isOnline) {
+      return const SaleSendResult(SaleSendStatus.networkError);
+    }
+
     http.Response response;
     try {
       response = await http
@@ -749,7 +838,10 @@ class ApiService {
           .timeout(const Duration(seconds: 8));
     } catch (e) {
       // Исключение здесь означает, что ответа от сервера не было вообще
-      // (DNS/сокет/таймаут) — это настоящий сетевой сбой.
+      // (DNS/сокет/таймаут) — это настоящий сетевой сбой. Помечаем связь
+      // как отсутствующую немедленно, чтобы СЛЕДУЮЩАЯ продажа не ждала
+      // тот же таймаут заново, а сразу шла в офлайн-очередь.
+      ConnectivityService.instance.markOffline();
       return const SaleSendResult(SaleSendStatus.networkError);
     }
 
@@ -1042,6 +1134,14 @@ class ApiService {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         // Сохраняем хэш PIN для будущего офлайн-входа
         await _db.savePinHash(userId, pin);
+        // Сохраняем refresh-токен продавца сразу здесь (а не через
+        // onSellerLogin в main.dart, у которого сигнатура жёстко
+        // ограничена token/role/username) — тем же ключом 'refresh_token',
+        // которым пользуется _tryRefreshToken при последующем 401.
+        if (data['refresh_token'] != null) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('refresh_token', data['refresh_token']);
+        }
         return data;
       }
 
@@ -1101,10 +1201,16 @@ class ApiService {
   /// Сгенерировать deeplink-токен для привязки Telegram (только owner)
   Future<Map<String, dynamic>?> generateTgLinkToken() async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/api/telegram/link-token'),
-        headers: await _getHeaders(),
-      );
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/telegram/link-token'),
+            headers: await _getHeaders(),
+          )
+          // Без таймаута при полном отсутствии интернета запрос мог
+          // висеть на системном таймауте десятки секунд, пока владелец
+          // магазина просто смотрит на нажатую иконку без какой-либо
+          // реакции интерфейса.
+          .timeout(const Duration(seconds: 8));
       _handleAuthErrors(response.statusCode);
       if (response.statusCode == 200) return jsonDecode(response.body);
       return null;

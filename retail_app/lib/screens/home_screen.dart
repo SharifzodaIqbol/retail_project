@@ -9,6 +9,7 @@ import '../widgets/barcode_scanner.dart';
 import '../providers/cart_provider.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/connectivity_service.dart';
 import '../services/data_refresh_service.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -30,9 +31,22 @@ class _HomeScreenState extends State<HomeScreen> {
   String _scannerBuffer = '';
   String _role = '';
 
+  // Показываем "Шабака нест..." только один раз при переходе в офлайн,
+  // а не на каждый чек подряд — иначе продавец видит одно и то же
+  // сообщение после каждой продажи, пока связь не восстановится.
+  bool _offlineWarningShown = false;
+  StreamSubscription? _connectivitySub;
+
   @override
   void initState() {
     super.initState();
+    // Как только связь восстановится, разрешаем снова один раз
+    // предупредить, если офлайн наступит опять.
+    _connectivitySub = ConnectivityService.instance.onConnectionRestored.listen(
+      (_) {
+        _offlineWarningShown = false;
+      },
+    );
     // Синхронизацию неотправленных чеков теперь делает только
     // SyncService (запускается один раз в main() на уровне всего
     // приложения). Раньше здесь тоже вызывался _syncOfflineSales — но
@@ -370,7 +384,11 @@ class _HomeScreenState extends State<HomeScreen> {
         // Реального ответа от сервера не было — это настоящий обрыв связи,
         // чек можно безопасно поставить в офлайн-очередь на автоповтор.
         await DatabaseHelper.instance.insertOfflineSale(saleData);
-        if (mounted) {
+        // Предупреждаем один раз за офлайн-сессию: кассир и так видит,
+        // что чек сохранился (сумма/корзина очистились), повторять одно
+        // и то же сообщение на каждую продажу без сети — только мешает.
+        if (mounted && !_offlineWarningShown) {
+          _offlineWarningShown = true;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Шабака нест! Чек дар хотираи телефон сабт шуд'),
@@ -509,6 +527,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _connectivitySub?.cancel();
     _searchController.dispose();
     _scannerFocusNode.dispose();
     super.dispose();
@@ -707,21 +726,34 @@ class _HomeScreenState extends State<HomeScreen> {
                                       horizontal: 12,
                                       vertical: 8,
                                     ),
-                                    child: Row(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                item.product.name,
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                              Row(
+                                        // Основной ряд карточки: название,
+                                        // цена, -/кол-во/+, сумма — всегда в
+                                        // одну строку. Чип выбора единицы
+                                        // сюда больше не подмешивается, чтобы
+                                        // у товаров с одной единицей ("шт")
+                                        // карточка оставалась компактной, в
+                                        // одну строку.
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
                                                 children: [
+                                                  Text(
+                                                    item.product.name,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
                                                   Text(
                                                     '${item.selectedUnit.price.toStringAsFixed(2)} сомонӣ',
                                                     style: const TextStyle(
@@ -729,70 +761,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                                       fontSize: 13,
                                                     ),
                                                   ),
-                                                  if (item
-                                                      .product
-                                                      .hasMultipleUnits) ...[
-                                                    const SizedBox(width: 6),
-                                                    GestureDetector(
-                                                      onTap: () async {
-                                                        final unit =
-                                                            await _pickUnit(
-                                                              item.product,
-                                                            );
-                                                        if (unit == null ||
-                                                            !mounted)
-                                                          return;
-                                                        Provider.of<
-                                                              CartProvider
-                                                            >(
-                                                              context,
-                                                              listen: false,
-                                                            )
-                                                            .changeUnit(
-                                                              item.product.id,
-                                                              unit,
-                                                            );
-                                                        _requestScannerFocus();
-                                                      },
-                                                      child: Container(
-                                                        padding:
-                                                            const EdgeInsets.symmetric(
-                                                              horizontal: 6,
-                                                              vertical: 1,
-                                                            ),
-                                                        decoration: BoxDecoration(
-                                                          color: const Color(
-                                                            0xFF4F6EF7,
-                                                          ).withOpacity(0.1),
-                                                          borderRadius:
-                                                              BorderRadius.circular(
-                                                                6,
-                                                              ),
-                                                        ),
-                                                        child: Text(
-                                                          '/ ${item.selectedUnit.label} ▾',
-                                                          style:
-                                                              const TextStyle(
-                                                                color: Color(
-                                                                  0xFF4F6EF7,
-                                                                ),
-                                                                fontSize: 12,
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .w600,
-                                                              ),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ],
                                                 ],
                                               ),
-                                            ],
-                                          ),
-                                        ),
-                                        Row(
-                                          children: [
+                                            ),
+                                            const SizedBox(width: 8),
                                             IconButton(
+                                              padding: EdgeInsets.zero,
+                                              constraints:
+                                                  const BoxConstraints(),
                                               icon: const Icon(
                                                 Icons.remove_circle_outline,
                                                 color: Colors.red,
@@ -810,6 +786,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                                 _requestScannerFocus();
                                               },
                                             ),
+                                            const SizedBox(width: 4),
                                             GestureDetector(
                                               onTap: () => _showQuantityDialog(
                                                 context,
@@ -841,7 +818,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                                 ),
                                               ),
                                             ),
+                                            const SizedBox(width: 4),
                                             IconButton(
+                                              padding: EdgeInsets.zero,
+                                              constraints:
+                                                  const BoxConstraints(),
                                               icon: const Icon(
                                                 Icons.add_circle_outline,
                                                 color: Color(0xFF27AE60),
@@ -860,21 +841,70 @@ class _HomeScreenState extends State<HomeScreen> {
                                                 }
                                               },
                                             ),
+                                            SizedBox(
+                                              width: 64,
+                                              child: Text(
+                                                (item.selectedUnit.price *
+                                                        item.quantity)
+                                                    .toStringAsFixed(2),
+                                                textAlign: TextAlign.right,
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.w700,
+                                                  fontSize: 15,
+                                                ),
+                                              ),
+                                            ),
                                           ],
                                         ),
-                                        SizedBox(
-                                          width: 80,
-                                          child: Text(
-                                            (item.selectedUnit.price *
-                                                    item.quantity)
-                                                .toStringAsFixed(2),
-                                            textAlign: TextAlign.right,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w700,
-                                              fontSize: 15,
+
+                                        // Если у товара несколько единиц
+                                        // продажи (шт/упаковка/блок...) —
+                                        // отдельным чипом под основным рядом,
+                                        // без него — под обычным товаром с
+                                        // одной единицей чип вообще не
+                                        // рисуется.
+                                        if (item.product.hasMultipleUnits) ...[
+                                          const SizedBox(height: 6),
+                                          GestureDetector(
+                                            onTap: () async {
+                                              final unit = await _pickUnit(
+                                                item.product,
+                                              );
+                                              if (unit == null || !mounted)
+                                                return;
+                                              Provider.of<CartProvider>(
+                                                context,
+                                                listen: false,
+                                              ).changeUnit(
+                                                item.product.id,
+                                                unit,
+                                              );
+                                              _requestScannerFocus();
+                                            },
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 8,
+                                                    vertical: 3,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: const Color(
+                                                  0xFF4F6EF7,
+                                                ).withOpacity(0.1),
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
+                                              ),
+                                              child: Text(
+                                                '${item.selectedUnit.label} ▾',
+                                                style: const TextStyle(
+                                                  color: Color(0xFF4F6EF7),
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
                                             ),
                                           ),
-                                        ),
+                                        ],
                                       ],
                                     ),
                                   ),

@@ -6,6 +6,7 @@ import '../services/api_service.dart';
 import '../services/data_refresh_service.dart';
 import '../services/connectivity_service.dart';
 import 'package:retail_app/widgets/barcode_scanner.dart';
+import 'label_print_screen.dart';
 
 /// Карточка с картинкой штрихкода под полем ввода (та же логика, что и в
 /// add_product_screen.dart).
@@ -771,7 +772,26 @@ class _EditProductScreenState extends State<EditProductScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Таҳрири маҳсулот')),
+      appBar: AppBar(
+        title: const Text('Таҳрири маҳсулот'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.print_outlined),
+            tooltip: 'Чопи этикетка',
+            onPressed: widget.product.barcode.trim().length != 13
+                ? null
+                : () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => LabelPrintScreen(
+                        products: [widget.product],
+                        autoSelectAll: true,
+                      ),
+                    ),
+                  ),
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         // ListView — форма сама скроллится, если поля (особенно список

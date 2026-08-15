@@ -758,18 +758,20 @@ class _AddProductScreenState extends State<AddProductScreen> {
               const Divider(),
               const SizedBox(height: 8),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const Text(
-                    'Воҳидҳои иловагӣ (масалан, қуттӣ)',
-                    style: TextStyle(fontWeight: FontWeight.w600),
+                  const Expanded(
+                    child: Text(
+                      'Воҳидҳои иловагӣ (масалан, қуттӣ)',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
                   ),
                   TextButton.icon(
                     onPressed: _extraUnits.length >= _maxExtraUnits
                         ? null
                         : _addExtraUnitRow,
                     icon: const Icon(Icons.add),
-                    label: const Text('Илова кардан'),
+                    label: const Text('Илова'),
                   ),
                 ],
               ),

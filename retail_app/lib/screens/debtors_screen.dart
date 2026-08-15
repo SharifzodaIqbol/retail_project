@@ -2,13 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/api_service.dart';
 
-/// Долговая книга — список должников с возможностью:
-///   • добавить нового должника (с защитой от дубликатов)
-///   • внести частичную оплату (вычесть)
-///   • добавить новый долг (добавить)
-///   • полностью закрыть (оплатить всё)
-///   • просмотреть историю операций
-///   • удалить должника (только owner)
 class DebtorsScreen extends StatefulWidget {
   final String role; // 'owner' | 'seller'
 
@@ -86,6 +79,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (_) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('Илова кардани қарздор'),
@@ -95,11 +89,14 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
               children: [
                 TextField(
                   controller: nameCtrl,
+                  maxLength: 50,
+                  maxLengthEnforcement: MaxLengthEnforcement.enforced,
                   onChanged: (_) => setDialogState(() => nameError = null),
                   decoration: InputDecoration(
                     labelText: 'Номи қарздор *',
                     border: const OutlineInputBorder(),
                     errorText: nameError,
+                    counterText: '',
                   ),
                   textCapitalization: TextCapitalization.words,
                 ),
@@ -107,16 +104,15 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                 TextField(
                   controller: phoneCtrl,
                   keyboardType: TextInputType.phone,
-                  inputFormatters: [
-                    // Разрешаем ввод только цифр, но через кастомный форматтер добавляем пробелы/дефисы
-                    FilteringTextInputFormatter.allow(RegExp(r'[\d\s\-]')),
-                    PhoneInputFormatter(),
-                  ],
+                  maxLength: 12,
+                  maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                  inputFormatters: [PhoneInputFormatter()],
                   onChanged: (_) => setDialogState(() => phoneError = null),
                   decoration: InputDecoration(
                     labelText: 'Телефон (ихтиёрӣ)',
                     border: const OutlineInputBorder(),
                     errorText: phoneError,
+                    counterText: '',
                     hintText: '918 12-34-56',
                     prefixIcon: const Row(
                       mainAxisSize: MainAxisSize.min,
@@ -130,6 +126,8 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: amountCtrl,
+                  maxLength: 12,
+                  maxLengthEnforcement: MaxLengthEnforcement.enforced,
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
@@ -142,11 +140,14 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                     border: const OutlineInputBorder(),
                     helperText: '0 — агар қарз ҳоло нест',
                     errorText: amountError,
+                    counterText: '',
                   ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: noteCtrl,
+                  maxLength: 200,
+                  maxLengthEnforcement: MaxLengthEnforcement.enforced,
                   decoration: const InputDecoration(
                     labelText: 'Фаҳмондадиҳи (ихтиёрӣ)',
                     border: OutlineInputBorder(),
@@ -157,7 +158,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: saving ? null : () => Navigator.pop(context),
               child: const Text('Бекор кардан'),
             ),
             ElevatedButton(
@@ -239,10 +240,12 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                       // 4. Валидация числового ввода суммы
                       final rawAmount = amountCtrl.text.trim().isEmpty
                           ? '0'
-                          : amountCtrl.text.trim();
-                      final amount = double.tryParse(
-                        rawAmount.replaceAll(',', '.'),
-                      );
+                          : amountCtrl.text.trim().replaceAll(',', '.');
+
+                      final dotCount = '.'.allMatches(rawAmount).length;
+                      final amount = dotCount <= 1
+                          ? double.tryParse(rawAmount)
+                          : null;
 
                       if (amount == null) {
                         setDialogState(
@@ -315,6 +318,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (_) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: Text(
@@ -363,6 +367,8 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                 TextField(
                   controller: amountCtrl,
                   autofocus: true,
+                  maxLength: 12,
+                  maxLengthEnforcement: MaxLengthEnforcement.enforced,
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
@@ -374,6 +380,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                     labelText: 'Маблағ (сомонӣ) *',
                     border: const OutlineInputBorder(),
                     errorText: amountError,
+                    counterText: '',
                     suffix: isPay && totalDebt > 0
                         ? TextButton(
                             style: TextButton.styleFrom(
@@ -391,6 +398,8 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: noteCtrl,
+                  maxLength: 200,
+                  maxLengthEnforcement: MaxLengthEnforcement.enforced,
                   decoration: const InputDecoration(
                     labelText: 'Фаҳмондадиҳи (ихтиёрӣ)',
                     border: OutlineInputBorder(),
@@ -401,7 +410,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: saving ? null : () => Navigator.pop(context),
               child: const Text('Бекор кардан'),
             ),
             ElevatedButton(
@@ -412,7 +421,10 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                   ? null
                   : () async {
                       final raw = amountCtrl.text.trim().replaceAll(',', '.');
-                      final amount = double.tryParse(raw);
+                      final dotCount = '.'.allMatches(raw).length;
+                      final amount = dotCount <= 1
+                          ? double.tryParse(raw)
+                          : null;
 
                       if (raw.isEmpty || amount == null) {
                         setDialogState(
@@ -1057,7 +1069,7 @@ class _IconBtn extends StatelessWidget {
   }
 }
 
-// ─── Форматтер маски для удобного ввода номера ──────────────────────────────
+// ─── Исправленный форматтер маски для удобного ввода номера ─────────────────
 
 class PhoneInputFormatter extends TextInputFormatter {
   @override
@@ -1065,16 +1077,18 @@ class PhoneInputFormatter extends TextInputFormatter {
     TextEditingValue oldValue,
     TextEditingValue newValue,
   ) {
-    // Вытаскиваем только чистые цифры из новой строки
-    final text = newValue.text.replaceAll(RegExp(r'\D'), '');
+    // 1. Извлекаем только цифры
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
 
-    // Ограничиваем ввод строго 9 цифрами
-    final cleanText = text.length > 9 ? text.substring(0, 9) : text;
+    // 2. Если пользователь ввел больше 9 цифр, отклоняем ввод нового символа
+    if (digits.length > 9) {
+      return oldValue;
+    }
 
+    // 3. Форматируем маску (918 12-34-56)
     final buffer = StringBuffer();
-    for (int i = 0; i < cleanText.length; i++) {
-      buffer.write(cleanText[i]);
-      // Формат: 918 12-34-56
+    for (int i = 0; i < digits.length; i++) {
+      buffer.write(digits[i]);
       if (i == 2) {
         buffer.write(' ');
       } else if (i == 4 || i == 6) {
@@ -1082,10 +1096,33 @@ class PhoneInputFormatter extends TextInputFormatter {
       }
     }
 
-    final string = buffer.toString();
-    return newValue.copyWith(
-      text: string,
-      selection: TextSelection.collapsed(offset: string.length),
+    final formatted = buffer.toString();
+
+    // 4. Корректный расчёт позиции курсора без перескока в начало
+    int digitsBeforeCursor = 0;
+    for (
+      int i = 0;
+      i < newValue.selection.end && i < newValue.text.length;
+      i++
+    ) {
+      if (RegExp(r'\d').hasMatch(newValue.text[i])) {
+        digitsBeforeCursor++;
+      }
+    }
+
+    int cursorIndex = 0;
+    int currentDigits = 0;
+    while (cursorIndex < formatted.length &&
+        currentDigits < digitsBeforeCursor) {
+      if (RegExp(r'\d').hasMatch(formatted[cursorIndex])) {
+        currentDigits++;
+      }
+      cursorIndex++;
+    }
+
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: cursorIndex),
     );
   }
 }

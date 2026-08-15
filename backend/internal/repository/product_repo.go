@@ -39,7 +39,7 @@ func (r *ProductRepository) Create(ctx context.Context, p domain.Product) (int, 
 		return 0, err
 	}
 
-	baseLabel := "шт"
+	baseLabel := "дона"
 	if p.Unit == domain.UnitKg {
 		baseLabel = "кг"
 	}
@@ -380,7 +380,7 @@ func (r *ProductRepository) Update(ctx context.Context, id, companyID, shopID in
 		return ErrNotFound
 	}
 
-	baseLabel := "шт"
+	baseLabel := "дона"
 	if p.Unit == domain.UnitKg {
 		baseLabel = "кг"
 	}
@@ -452,7 +452,7 @@ func (r *ProductRepository) UpsertFromImportRow(ctx context.Context, tx pgx.Tx, 
 		return false, err
 	}
 
-	baseLabel := "шт"
+	baseLabel := "дона"
 	if p.Unit == domain.UnitKg {
 		baseLabel = "кг"
 	}

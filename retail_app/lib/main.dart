@@ -24,9 +24,6 @@ void main() async {
     databaseFactory = databaseFactoryFfiWeb;
   }
   await ConnectivityService.instance.init();
-  // Живёт на уровне всего приложения: как только связь появляется —
-  // неотправленные чеки и каталог товаров синхронизируются сами,
-  // независимо от того, какой экран сейчас открыт у продавца.
   SyncService.instance.start();
   runApp(
     MultiProvider(
@@ -85,6 +82,7 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
   Future<void> _checkAuth() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('jwt_token') ?? '';
+    final offlineSession = prefs.getBool('offline_session_active') ?? false;
     final role = prefs.getString('user_role') ?? '';
     final terminalMode = prefs.getBool('terminal_mode') ?? false;
     final companyId = prefs.getInt('company_id') ?? 0;
@@ -93,7 +91,9 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
     final shopId = prefs.getInt('shop_id') ?? 0;
 
     setState(() {
-      _loggedIn = token.isNotEmpty;
+      // Офлайн-сессия продавца не имеет настоящего jwt_token, поэтому
+      // проверяем ещё и отдельный флаг офлайн-входа.
+      _loggedIn = token.isNotEmpty || offlineSession;
       _role = role;
       _terminalMode = terminalMode;
       _companyId = companyId;
@@ -133,19 +133,21 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
     await prefs.remove('jwt_token');
     await prefs.remove('user_role');
     await prefs.remove('username');
+    await prefs.setBool('offline_session_active', false);
     await _checkAuth();
   }
 
   void _onOwnerExitTerminal() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('terminal_mode', false);
+    await prefs.setBool('offline_session_active', false);
     await _checkAuth();
   }
 
   @override
   Widget build(BuildContext context) {
     if (_checking) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const _BrandedLoadingScreen();
     }
 
     if (_terminalMode && !_loggedIn) {
@@ -155,9 +157,15 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
         shopId: _shopId,
         onSellerLogin: (token, role, username) async {
           final prefs = await SharedPreferences.getInstance();
-          // Офлайн-токен не сохраняем в SharedPreferences — только имя и роль
+          // Офлайн-токен не сохраняем в SharedPreferences — только имя и роль,
+          // а сам факт офлайн-сессии — отдельным флагом, иначе _checkAuth
+          // не увидит продавца залогиненным и вернёт его обратно на экран
+          // выбора продавца (jwt_token остаётся пустым).
           if (token != 'offline_token') {
             await prefs.setString('jwt_token', token);
+            await prefs.setBool('offline_session_active', false);
+          } else {
+            await prefs.setBool('offline_session_active', true);
           }
           await prefs.setString('user_role', role);
           await prefs.setString('username', username);
@@ -184,6 +192,9 @@ class _AppBootstrapperState extends State<AppBootstrapper> {
           final prefs = await SharedPreferences.getInstance();
           if (token != 'offline_token') {
             await prefs.setString('jwt_token', token);
+            await prefs.setBool('offline_session_active', false);
+          } else {
+            await prefs.setBool('offline_session_active', true);
           }
           await prefs.setString('user_role', role);
           await prefs.setString('username', username);
@@ -311,4 +322,43 @@ class _NavItem {
     required this.label,
     required this.screen,
   });
+}
+
+class _BrandedLoadingScreen extends StatelessWidget {
+  const _BrandedLoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Тот же файл, что и flutter_native_splash — так переход с
+            // нативного сплэша на первый Flutter-кадр не "моргает".
+            Image.asset(
+              'assets/images/savidor.png',
+              width: 120,
+              height: 120,
+              errorBuilder: (context, error, stackTrace) => const Icon(
+                Icons.storefront_rounded,
+                size: 96,
+                color: Color(0xFF4F6EF7),
+              ),
+            ),
+            const SizedBox(height: 28),
+            const SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                valueColor: AlwaysStoppedAnimation(Color(0xFF4F6EF7)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

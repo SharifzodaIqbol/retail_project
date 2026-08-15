@@ -1,6 +1,13 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 
+// Те же разумные границы ввода, что и на экране входа.
+const int _kMaxCompanyLength = 80;
+const int _kMinUsernameLength = 3;
+const int _kMaxUsernameLength = 50;
+const int _kMinPasswordLength = 6;
+const int _kMaxPasswordLength = 72;
+
 // ─── Цвета бренда (те же, что в login_screen.dart) ──────────────────────────
 const _kPrimary = Color(0xFF4F6EF7);
 const _kPrimaryDeep = Color(0xFF6C4FF7);
@@ -33,15 +40,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   void _handleRegister() async {
+    if (_isLoading) return;
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
 
-    final success = await _authService.register(
-      _companyController.text.trim(),
-      _usernameController.text.trim(),
-      _passwordController.text,
-    );
+    bool success;
+    try {
+      success = await _authService.register(
+        _companyController.text.trim(),
+        _usernameController.text.trim(),
+        _passwordController.text,
+      );
+    } on NetworkException catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showError(e.message);
+      return;
+    } on ServerException catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showError(e.message);
+      return;
+    }
 
     setState(() => _isLoading = false);
 
@@ -60,19 +81,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
       Navigator.pop(context);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFFE74C3C),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-          content: const Text(
-            'Хатои бақайдгирӣ. Шояд логин банд бошад, шумо метавонед логини дигар интихоб кунед.',
-          ),
-        ),
+      // Сюда попадаем только когда сервер реально отверг данные
+      // (например, логин занят) — сеть и сервер обработаны выше.
+      _showError(
+        'Хатои бақайдгирӣ. Шояд логин банд бошад, шумо метавонед логини дигар интихоб кунед.',
       );
     }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFFE74C3C),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        content: Text(message),
+      ),
+    );
   }
 
   @override
@@ -85,7 +110,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               return SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
+                // ClampingScrollPhysics убирает "резиновый" оверскролл,
+                // из-за которого экран уезжал вниз при потягивании.
+                physics: const ClampingScrollPhysics(),
                 child: ConstrainedBox(
                   constraints: BoxConstraints(minHeight: constraints.maxHeight),
                   child: IntrinsicHeight(
@@ -136,9 +163,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   hint: 'Номи мағоза ё ширкат',
                                   icon: Icons.storefront_outlined,
                                   textInputAction: TextInputAction.next,
-                                  validator: (v) => v!.trim().isEmpty
-                                      ? 'Логинро ворид кунед'
-                                      : null,
+                                  maxLength: _kMaxCompanyLength,
+                                  validator: (v) {
+                                    final value = v?.trim() ?? '';
+                                    if (value.isEmpty) {
+                                      return 'Номи мағозаро ворид кунед';
+                                    }
+                                    if (value.length > _kMaxCompanyLength) {
+                                      return 'Ном аз $_kMaxCompanyLength аломат зиёд аст';
+                                    }
+                                    return null;
+                                  },
                                 ),
 
                                 const SizedBox(height: 24),
@@ -154,9 +189,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   hint: 'Логини соҳибкор',
                                   icon: Icons.person_outline,
                                   textInputAction: TextInputAction.next,
-                                  validator: (v) => v!.trim().isEmpty
-                                      ? 'Логинатонро ворид кунед'
-                                      : null,
+                                  maxLength: _kMaxUsernameLength,
+                                  validator: (v) {
+                                    final value = v?.trim() ?? '';
+                                    if (value.isEmpty) {
+                                      return 'Логинатонро ворид кунед';
+                                    }
+                                    if (value.length < _kMinUsernameLength) {
+                                      return 'Логин бояд ками-кам аз $_kMinUsernameLength аломат иборат бошад';
+                                    }
+                                    if (value.length > _kMaxUsernameLength) {
+                                      return 'Логин аз $_kMaxUsernameLength аломат зиёд аст';
+                                    }
+                                    return null;
+                                  },
                                 ),
                                 const SizedBox(height: 14),
                                 _AuthTextField(
@@ -166,9 +212,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   obscureText: _obscurePassword,
                                   textInputAction: TextInputAction.done,
                                   onSubmitted: (_) => _handleRegister(),
-                                  validator: (v) => v!.length < 6
-                                      ? 'Ками-кам 6 аломат ворид кардан лозим аст.'
-                                      : null,
+                                  maxLength: _kMaxPasswordLength,
+                                  validator: (v) {
+                                    final value = v ?? '';
+                                    if (value.length < _kMinPasswordLength) {
+                                      return 'Ками-кам $_kMinPasswordLength аломат ворид кардан лозим аст.';
+                                    }
+                                    if (value.length > _kMaxPasswordLength) {
+                                      return 'Рамз аз $_kMaxPasswordLength аломат зиёд аст';
+                                    }
+                                    return null;
+                                  },
                                   suffix: IconButton(
                                     splashRadius: 20,
                                     icon: Icon(
@@ -449,6 +503,7 @@ class _AuthTextField extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
   final Widget? suffix;
   final String? Function(String?)? validator;
+  final int? maxLength;
 
   const _AuthTextField({
     required this.controller,
@@ -460,6 +515,7 @@ class _AuthTextField extends StatelessWidget {
     this.onSubmitted,
     this.suffix,
     this.validator,
+    this.maxLength,
   });
 
   @override
@@ -471,12 +527,15 @@ class _AuthTextField extends StatelessWidget {
       textInputAction: textInputAction,
       onFieldSubmitted: onSubmitted,
       validator: validator,
+      maxLength: maxLength,
+      autovalidateMode: AutovalidateMode.onUserInteraction,
       style: const TextStyle(fontSize: 15, color: _kInk),
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14.5),
         prefixIcon: Icon(icon, color: Colors.grey[500], size: 21),
         suffixIcon: suffix,
+        counterText: '',
         filled: true,
         fillColor: _kBg,
         contentPadding: const EdgeInsets.symmetric(vertical: 16),

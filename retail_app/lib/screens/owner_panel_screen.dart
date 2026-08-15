@@ -22,6 +22,11 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
   bool _loading = true;
   String? _ownerUsername;
   bool _tgLinked = false;
+  // Пока ждём ответ сервера на генерацию токена привязки — показываем
+  // спиннер прямо на месте иконки Telegram, чтобы владелец сразу видел,
+  // что нажатие сработало и что-то происходит (а не решил, что кнопка
+  // "не работает", особенно на медленной или отсутствующей сети).
+  bool _tgLinking = false;
 
   final TextEditingController _employeeSearchCtrl = TextEditingController();
   String _employeeSearchQuery = '';
@@ -82,8 +87,25 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
   // ─── Telegram ────────────────────────────────────────────────────────────
 
   Future<void> _linkTelegram() async {
+    setState(() => _tgLinking = true);
     final result = await _api.generateTgLinkToken();
-    if (result == null || !mounted) return;
+    if (!mounted) return;
+    setState(() => _tgLinking = false);
+
+    if (result == null) {
+      // Явно объясняем причину, а не оставляем владельца гадать, почему
+      // ничего не открылось после нажатия — это обычно либо нет сети,
+      // либо сервер недоступен.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Пайваст ба сервер муяссар нашуд. Пайвасти интернетро санҷед.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
     final token = result['token'] as String;
     final botName = result['bot_name'] as String? ?? '';
@@ -615,21 +637,35 @@ class _OwnerPanelScreenState extends State<OwnerPanelScreen> {
                     title: _tgLinked
                         ? 'Telegram пайваст карда шудааст'
                         : 'Пайвастшавӣ ба Telegram',
-                    subtitle: _tgLinked
-                        ? 'Ба шумо огоҳиномаҳои фурӯш равно карда мешавад'
-                        : 'Огоҳиномаҳои фурӯшро қабул кунед',
-                    onTap: _tgLinked ? _unlinkTelegram : _linkTelegram,
-                    trailing: _tgLinked
-                        ? const Icon(
-                            Icons.check_circle,
-                            color: Colors.green,
-                            size: 20,
+                    subtitle: _tgLinking
+                        ? 'Пайваст шуда истодааст...'
+                        : (_tgLinked
+                              ? 'Ба шумо огоҳиномаҳои фурӯш равно карда мешавад'
+                              : 'Огоҳиномаҳои фурӯшро қабул кунед'),
+                    // Пока идёт запрос, повторное нажатие игнорируем —
+                    // иначе можно наштамповать несколько параллельных
+                    // запросов токена, пока владелец в нетерпении тыкает
+                    // на медленной сети.
+                    onTap: _tgLinking
+                        ? () {}
+                        : (_tgLinked ? _unlinkTelegram : _linkTelegram),
+                    trailing: _tgLinking
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(
-                            Icons.arrow_forward_ios,
-                            size: 16,
-                            color: Colors.grey,
-                          ),
+                        : (_tgLinked
+                              ? const Icon(
+                                  Icons.check_circle,
+                                  color: Colors.green,
+                                  size: 20,
+                                )
+                              : const Icon(
+                                  Icons.arrow_forward_ios,
+                                  size: 16,
+                                  color: Colors.grey,
+                                )),
                     subtitleColor: _tgLinked ? Colors.green : null,
                   ),
 
