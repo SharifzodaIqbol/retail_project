@@ -56,6 +56,7 @@ func (h *Handler) getSalesHistory(c *gin.Context) {
 func (h *Handler) cancelSale(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 	shopID := c.MustGet("shop_id").(int)
+	sellerID := c.MustGet("user_id").(int)
 	idStr := c.Param("id")
 	id, _ := strconv.Atoi(idStr)
 	var input struct {
@@ -80,10 +81,15 @@ func (h *Handler) cancelSale(c *gin.Context) {
 		return
 	}
 
+	sellerName := ""
+	if seller, err := h.userRepo.GetByIDAndCompany(context.Background(), sellerID, companyID); err == nil && seller != nil {
+		sellerName = seller.Username
+	}
+
 	go func() {
 		ownerID, _ := h.userRepo.GetOwnerChatID(context.Background(), companyID)
 		if ownerID != 0 {
-			h.tgBot.SendCancelNotification(ownerID, id, input.Reason, totalAmount)
+			h.tgBot.SendCancelNotification(ownerID, id, input.Reason, totalAmount, sellerName)
 		}
 	}()
 

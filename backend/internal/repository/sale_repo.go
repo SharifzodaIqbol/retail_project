@@ -115,7 +115,7 @@ func (r *SaleRepository) GetTopProducts(ctx context.Context, companyID int, limi
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales s ON si.sale_id = s.id
-        WHERE s.company_id = $1
+        WHERE s.company_id = $1 AND s.is_canceled = false
         GROUP BY p.name, p.unit
         ORDER BY total_qty DESC
         LIMIT $2`

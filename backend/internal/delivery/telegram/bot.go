@@ -187,8 +187,11 @@ func (b *Bot) Start(saleRepo *repository.SaleRepository, userRepo *repository.Us
 
 // --- Уведомления ---
 
-func (b *Bot) SendCancelNotification(chatID int64, saleID int, reason string, total float64) {
-	msg := fmt.Sprintf("⚠️ **БЕКОР КАРДАНИ ЧЕК!**\nЧек: №%d\nМаблағ: %.2f\nСабаб: %s", saleID, total, reason)
+func (b *Bot) SendCancelNotification(chatID int64, saleID int, reason string, total float64, sellerName string) {
+	if sellerName == "" {
+		sellerName = "Номаълум"
+	}
+	msg := fmt.Sprintf("⚠️ **БЕКОР КАРДАНИ ЧЕК!**\nЧек: №%d\nМаблағ: %.2f\nФурушанда: %s\nСабаб: %s", saleID, total, sellerName, reason)
 	if _, err := b.teleBot.Send(telebot.ChatID(chatID), msg, telebot.ModeMarkdown); err != nil {
 		logger.L.Error("Telegram: не удалось отправить уведомление об отмене чека", "chat_id", chatID, "sale_id", saleID, "error", err.Error())
 	}
