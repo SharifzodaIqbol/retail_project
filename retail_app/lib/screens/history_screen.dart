@@ -187,36 +187,69 @@ class _HistoryScreenState extends State<HistoryScreen>
 
   void _showCancelDialog(int saleId) {
     final controller = TextEditingController();
+    bool isSubmitting = false;
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Бекор кардани чек №$saleId'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(hintText: 'Сабаби бекоркунӣ'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Қафо'),
+      barrierDismissible: !isSubmitting,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Бекор кардани чек №$saleId'),
+          content: TextField(
+            controller: controller,
+            enabled: !isSubmitting,
+            decoration: const InputDecoration(hintText: 'Сабаби бекоркунӣ'),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: _Palette.danger),
-            onPressed: () async {
-              bool ok = await _apiService.cancelSale(saleId, controller.text);
-              if (ok) {
-                if (mounted) {
-                  Navigator.pop(context);
-                  setState(() {});
-                }
-              }
-            },
-            child: const Text(
-              'БЕКОР КАРДАН',
-              style: TextStyle(color: Colors.white),
+          actions: [
+            TextButton(
+              onPressed: isSubmitting ? null : () => Navigator.pop(context),
+              child: const Text('Қафо'),
             ),
-          ),
-        ],
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _Palette.danger,
+              ),
+              onPressed: isSubmitting
+                  ? null
+                  : () async {
+                      setDialogState(() => isSubmitting = true);
+                      bool ok = await _apiService.cancelSale(
+                        saleId,
+                        controller.text,
+                      );
+                      if (!mounted) return;
+                      if (ok) {
+                        Navigator.pop(context);
+                        // Список обновится автоматически через
+                        // DataRefreshService.onSaleChanged (AutoRefreshMixin),
+                        // но перерисуем сразу для мгновенной обратной связи.
+                        setState(() {});
+                      } else {
+                        setDialogState(() => isSubmitting = false);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Хатогӣ ҳангоми бекоркунии чек'),
+                          ),
+                        );
+                      }
+                    },
+              child: isSubmitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Colors.white,
+                        ),
+                      ),
+                    )
+                  : const Text(
+                      'БЕКОР КАРДАН',
+                      style: TextStyle(color: Colors.white),
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }

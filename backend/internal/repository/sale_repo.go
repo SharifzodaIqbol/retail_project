@@ -257,16 +257,29 @@ func (r *SaleRepository) GetDailyNetProfit(ctx context.Context, companyID int) (
 
 // ─── НОВЫЕ методы аналитики ────────────────────────────────────────────────
 
+// GetPeriodSummary — сводка за период (выручка, чистая прибыль, число чеков,
+// средний чек). ВАЖНО: profit считается через подзапрос, агрегирующий
+// sale_items ПО ОТДЕЛЬНОСТИ (GROUP BY sale_id) и только потом джойнится к
+// sales. Раньше здесь был прямой LEFT JOIN sales -> sale_items: для чека с
+// несколькими товарами это давало по одной строке на каждую позицию, и
+// SUM(s.total_amount)/AVG(s.total_amount) суммировали total_amount чека
+// столько раз, сколько в нём было разных товаров — выручка и средний чек
+// оказывались завышены (и выглядело так, будто отмена чека "не убирает"
+// его сумму до конца, хотя is_canceled=false в WHERE всегда был корректен).
 func (r *SaleRepository) GetPeriodSummary(ctx context.Context, companyID, shopID int, from, to time.Time) (domain.PeriodSummary, error) {
 	var summary domain.PeriodSummary
 	query := `
 		SELECT 
 			COALESCE(SUM(s.total_amount), 0) as revenue,
-			COALESCE(SUM(si.quantity_base * (si.price_at_sale - si.buy_price_at_sale)), 0) as profit,
-			COUNT(DISTINCT s.id) as sales_count,
+			COALESCE(SUM(p.sale_profit), 0) as profit,
+			COUNT(s.id) as sales_count,
 			COALESCE(AVG(s.total_amount), 0) as avg_check
 		FROM sales s
-		LEFT JOIN sale_items si ON s.id = si.sale_id
+		LEFT JOIN (
+			SELECT sale_id, SUM(quantity_base * (price_at_sale - buy_price_at_sale)) as sale_profit
+			FROM sale_items
+			GROUP BY sale_id
+		) p ON p.sale_id = s.id
 		WHERE s.is_canceled = false AND s.company_id = $1 AND s.shop_id = $2
 		  AND s.created_at >= $3 AND s.created_at < $4`
 

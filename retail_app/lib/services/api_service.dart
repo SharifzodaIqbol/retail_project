@@ -1289,7 +1289,12 @@ class ApiService {
         body: jsonEncode({'reason': reason}),
       );
       _handleAuthErrors(response.statusCode);
-      return response.statusCode == 200;
+      final ok = response.statusCode == 200;
+      if (ok) {
+        DataRefreshService.instance.notifySaleChanged();
+        DataRefreshService.instance.notifyAnalyticsChanged();
+      }
+      return ok;
     } catch (_) {
       return false;
     }
