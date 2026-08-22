@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -11,6 +12,7 @@ import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/data_refresh_service.dart';
+import '../services/sale_rejection_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback? onSellerLogout;
@@ -36,6 +38,15 @@ class _HomeScreenState extends State<HomeScreen> {
   // сообщение после каждой продажи, пока связь не восстановится.
   bool _offlineWarningShown = false;
   StreamSubscription? _connectivitySub;
+  StreamSubscription? _saleRejectionSub;
+
+  // ПРИМЕЧАНИЕ: раньше здесь была защита от двойного тапа на время
+  // сетевого ожидания (_isCheckingOut + блокировка кнопки). Теперь чек
+  // отправляется в фоне (см. _checkout/_sendSaleInBackground), поэтому
+  // кассира вообще не держат на экране оплаты — как только корзина
+  // очищена, кнопка и так неактивна (cart.items.isEmpty), новый тап
+  // просто откроет НОВЫЙ чек, а не повторит старый. Двойная отправка ОДНОГО
+  // и того же чека по-прежнему исключена idempotency_key на сервере.
 
   @override
   void initState() {
@@ -47,6 +58,26 @@ class _HomeScreenState extends State<HomeScreen> {
         _offlineWarningShown = false;
       },
     );
+    // Чек, отправленный в фоне (см. _sendSaleInBackground), мог быть
+    // отклонён сервером уже ПОСЛЕ того, как кассир увидел "✅ Чек оформлен"
+    // и, возможно, успел пробить следующую продажу. Единственный способ
+    // сообщить ему об этом — отдельный баннер по этому потоку, а не
+    // блокировать экран заранее в ожидании ответа.
+    _saleRejectionSub = SaleRejectionService.instance.onSaleRejected.listen((
+      errorMessage,
+    ) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '⚠️ Чеки қаблӣ рад карда шуд: $errorMessage. '
+            'Захираро тафтиш кунед.',
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 10),
+        ),
+      );
+    });
     // Синхронизацию неотправленных чеков теперь делает только
     // SyncService (запускается один раз в main() на уровне всего
     // приложения). Раньше здесь тоже вызывался _syncOfflineSales — но
@@ -303,6 +334,18 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Случайный ключ на одну попытку оплаты: 128 бит от криптографического
+  /// генератора + метка времени (на случай крайне маловероятной коллизии
+  /// Random.secure — время делает совпадение практически невозможным).
+  /// Не uuid-пакет специально, чтобы не тянуть новую зависимость ради
+  /// одной строки, которая нужна только для сравнения на сервере.
+  String _buildIdempotencyKey() {
+    final rand = Random.secure();
+    final bytes = List<int>.generate(16, (_) => rand.nextInt(256));
+    final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    return '${DateTime.now().microsecondsSinceEpoch}-$hex';
+  }
+
   void _checkout(BuildContext context) async {
     final cart = Provider.of<CartProvider>(context, listen: false);
     if (cart.items.isEmpty) return;
@@ -321,7 +364,9 @@ class _HomeScreenState extends State<HomeScreen> {
     // синтетическую единицу с id = 0 (см. product.dart), которой нет в
     // product_units на сервере — сервер отклонит весь чек с ошибкой
     // "единица продажи не найдена: 0". Ловим это здесь, ДО отправки, чтобы
-    // кассир увидел понятную причину, а не общую ошибку оплаты.
+    // кассир увидел понятную причину, а не общую ошибку оплаты. Это
+    // ЕДИНСТВЕННАЯ проверка, которую мы делаем синхронно перед тем, как
+    // отпустить кассира дальше — она чисто локальная и не требует сети.
     final brokenItem = cart.items.values
         .where((i) => i.selectedUnit.id == 0)
         .toList();
@@ -362,31 +407,65 @@ class _HomeScreenState extends State<HomeScreen> {
           )
           .toList(),
       'total_amount': cart.totalAmount,
+      // Один ключ на всю попытку оплаты: переживает уход в офлайн-очередь
+      // и повторную отправку через SyncService — сервер увидит тот же
+      // ключ и не создаст второй чек, если исходный запрос всё же дошёл
+      // с опозданием. См. backend/.../sale_repo.go ExecuteSale.
+      'idempotency_key': _buildIdempotencyKey(),
     };
 
+    // ─── ОПТИМИСТИЧНОЕ ЗАВЕРШЕНИЕ ────────────────────────────────────────
+    // Дальше НЕ ждём ответ сервера: на слабой связи POST /api/sales может
+    // идти несколько секунд, и всё это время кассир с покупателем у кассы
+    // просто стояли бы и смотрели на спиннер. Вместо этого чек считается
+    // оформленным сразу — корзина очищается, кассир может тут же пробивать
+    // следующего покупателя, а сама отправка на сервер уходит в фон.
+    //
+    // Компромисс, на который мы идём: подтверждение остатков на складе
+    // происходит уже ПОСЛЕ того, как чек показан кассиру как готовый.
+    // Если сервер всё же отклонит чек (например, этот же товар успели
+    // продать на другой кассе раньше, чем наш запрос дошёл), кассир узнает
+    // об этом отдельным баннером через SaleRejectionService, а не будет
+    // ждать этого узнавания здесь и сейчас. Обрыв связи (networkError)
+    // вообще не требует внимания кассира — чек просто уходит в ту же
+    // офлайн-очередь, что и раньше.
+    cart.clearCart();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Чек оформлен'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+
+    unawaited(_sendSaleInBackground(saleData));
+  }
+
+  /// Реальная отправка чека на сервер — выполняется уже ПОСЛЕ того, как
+  /// кассир увидел "✅ Чек оформлен" и продолжил работу (см. _checkout).
+  /// Экран (this State) к моменту ответа сервера почти наверняка ещё жив
+  /// (HomeScreen живёт внутри IndexedStack и не пересоздаётся при
+  /// переключении вкладок), но на всякий случай каждое обращение к
+  /// context защищено проверкой mounted.
+  Future<void> _sendSaleInBackground(Map<String, dynamic> saleData) async {
     final result = await _apiService.createSale(saleData);
 
     switch (result.status) {
       case SaleSendStatus.success:
         DataRefreshService.instance.notifySaleChanged();
         DataRefreshService.instance.notifyProductChanged();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✅ Фурӯш ба расмият дароварда шуд!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
         break;
 
       case SaleSendStatus.networkError:
         // Реального ответа от сервера не было — это настоящий обрыв связи,
         // чек можно безопасно поставить в офлайн-очередь на автоповтор.
         await DatabaseHelper.instance.insertOfflineSale(saleData);
-        // Предупреждаем один раз за офлайн-сессию: кассир и так видит,
-        // что чек сохранился (сумма/корзина очистились), повторять одно
-        // и то же сообщение на каждую продажу без сети — только мешает.
+        // Кассир уже увидел "✅ Чек оформлен" и мог уйти дальше — это
+        // просто информационное уведомление (не блокирует и не откатывает
+        // ничего), показываем один раз за офлайн-сессию, чтобы не
+        // мешать на каждой продаже подряд без сети.
         if (mounted && !_offlineWarningShown) {
           _offlineWarningShown = true;
           ScaffoldMessenger.of(context).showSnackBar(
@@ -401,24 +480,15 @@ class _HomeScreenState extends State<HomeScreen> {
       case SaleSendStatus.rejected:
         // Сервер ответил и отклонил чек по существу (например, недостаточно
         // товара на складе). Повторная идентичная отправка даст ту же
-        // ошибку, поэтому НЕ кладём чек в офлайн-очередь на автоповтор —
-        // вместо этого явно показываем причину, чтобы продавец/владелец
-        // мог её устранить (пополнить остатки, поправить количество и т.п.).
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Чек рад карда шуд: ${result.errorMessage ?? "номаълум"}',
-              ),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 5),
-            ),
-          );
-        }
+        // ошибку, поэтому НЕ кладём чек в офлайн-очередь на автоповтор.
+        // Это единственный случай фоновой отправки, который ДЕЙСТВИТЕЛЬНО
+        // должен прервать кассира — то, что он уже пробил и, возможно,
+        // отдал сдачу, разошлось со складом. Сообщаем через баннер.
+        SaleRejectionService.instance.notifyRejected(
+          result.errorMessage ?? 'номаълум',
+        );
         break;
     }
-
-    cart.clearCart();
   }
 
   void _promptWeightAndAdd(Product product) {
@@ -528,6 +598,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _debounce?.cancel();
     _connectivitySub?.cancel();
+    _saleRejectionSub?.cancel();
     _searchController.dispose();
     _scannerFocusNode.dispose();
     super.dispose();
@@ -953,6 +1024,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SizedBox(width: 20),
                         Expanded(
                           child: ElevatedButton(
+                            // Больше не блокируем кнопку на время сетевого
+                            // ожидания — отправка ушла в фон (см. _checkout/
+                            // _sendSaleInBackground), кассир может сразу
+                            // пробивать следующий чек. Единственное условие —
+                            // непустая корзина.
                             onPressed: cart.items.isEmpty
                                 ? null
                                 : () => _checkout(context),

@@ -557,7 +557,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                         ? 'Бекор карда шуд: ${sale['cancel_reason'] ?? ''}'
                         : [
                             if (time.isNotEmpty) time,
-                            'Фурӯшанда: ${sale['seller_name'] ?? sale['seller_id']}',
+                            'Фурӯшанда: ${sale['seller_name'] ?? sale['seller_id'] ?? 'удалён'}',
                           ].join(' | '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
