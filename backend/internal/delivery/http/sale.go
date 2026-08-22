@@ -13,6 +13,12 @@ func (h *Handler) executeSale(c *gin.Context) {
 	var input struct {
 		Items []domain.SaleItem `json:"items"`
 		Total float64           `json:"total_amount"`
+		// IdempotencyKey — генерируется клиентом один раз на попытку оплаты.
+		// Защищает от задвоенного чека, если запрос отправлен повторно
+		// (двойной тап "Пардохт" при зависшей на слабой сети отправке,
+		// либо параллельный повтор через офлайн-очередь). Необязателен —
+		// старые версии приложения без этого поля продолжат работать как раньше.
+		IdempotencyKey string `json:"idempotency_key"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		logWarn(c, "Оформление продажи: неверный формат запроса", "error", err.Error())
@@ -22,7 +28,7 @@ func (h *Handler) executeSale(c *gin.Context) {
 	companyID := c.MustGet("company_id").(int)
 	shopID := c.MustGet("shop_id").(int)
 	sellerID := c.MustGet("user_id").(int)
-	saleID, err := h.saleRepo.ExecuteSale(context.Background(), companyID, shopID, sellerID, input.Items, input.Total)
+	saleID, err := h.saleRepo.ExecuteSale(context.Background(), companyID, shopID, sellerID, input.Items, input.Total, input.IdempotencyKey)
 	if err != nil {
 		logErr(c, err, "Ошибка оформления продажи", "company_id", companyID, "seller_id", sellerID, "items_count", len(input.Items), "total", input.Total)
 		c.JSON(500, gin.H{"error": err.Error()})

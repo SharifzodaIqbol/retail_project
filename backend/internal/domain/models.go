@@ -137,9 +137,12 @@ type SaleItem struct {
 }
 
 type Sale struct {
-	ID           int     `json:"id"`
-	SellerID     int     `json:"seller_id"`
-	SellerName   string  `json:"seller_name,omitempty"`
+	ID     int  `json:"id"`
+	// SellerID может быть NULL: seller_id ON DELETE SET NULL — если продавца
+	// удалили из системы, у его старых чеков seller_id обнуляется, а сам чек
+	// остаётся в истории продаж.
+	SellerID     *int    `json:"seller_id"`
+	SellerName   *string `json:"seller_name,omitempty"`
 	ShopID       int     `json:"shop_id,omitempty"`
 	TotalAmount  float64 `json:"total_amount"`
 	IsCanceled   bool    `json:"is_canceled"`

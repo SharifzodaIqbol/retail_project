@@ -2,13 +2,24 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"retail-managment-system/internal/domain"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// isUniqueViolation — true, если ошибка Postgres — нарушение unique-индекса
+// (код 23505). Используется для дедупликации продаж по idempotency_key при
+// гонке двух одновременных запросов с одинаковым ключом.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
 
 type SaleRepository struct {
 	db *pgxpool.Pool
@@ -22,18 +33,64 @@ func NewSaleRepository(db *pgxpool.Pool) *SaleRepository {
 // ВАЖНО: company_id и shop_id записываются в sales, и каждая позиция чека
 // проверяется на принадлежность тому же магазину (нельзя продать и списать
 // со склада товар другого магазина/компании, передав чужой product_id).
-func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID, shopID int, sellerID int, items []domain.SaleItem, total float64) (int, error) {
+//
+// idempotencyKey — генерируется клиентом один раз на попытку оплаты
+// (см. lib/screens/home_screen.dart _checkout). Это защита от задвоенного
+// чека при слабой связи: если кассир нажал "Пардохт" второй раз, пока
+// первый запрос ещё не ответил, ИЛИ если офлайн-синхронизация и обычный
+// онлайн-запрос отправили один и тот же чек параллельно — второй вызов
+// с тем же ключом должен вернуть id уже созданного чека, а не списывать
+// склад повторно. Пустая строка (старые клиенты/служебные вызовы) отключает
+// проверку — ведёт себя как раньше.
+func (r *SaleRepository) ExecuteSale(ctx context.Context, companyID, shopID int, sellerID int, items []domain.SaleItem, total float64, idempotencyKey string) (int, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
 
+	if idempotencyKey != "" {
+		var existingID int
+		err = tx.QueryRow(ctx,
+			"SELECT id FROM sales WHERE company_id = $1 AND idempotency_key = $2",
+			companyID, idempotencyKey).Scan(&existingID)
+		if err == nil {
+			// Чек с этим ключом уже создан ранее (повторный тап/повторная
+			// отправка) — возвращаем его id, ничего заново не вставляя
+			// и не списывая склад повторно. Транзакцию можно просто
+			// откатить (defer), она ничего не изменила.
+			return existingID, nil
+		}
+		// pgx.ErrNoRows — ожидаемый случай (ключ новый, чека ещё нет),
+		// продолжаем обычную вставку. Любая другая ошибка — настоящий сбой.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return 0, err
+		}
+	}
+
 	var saleID int
+	var idempotencyKeyParam interface{}
+	if idempotencyKey != "" {
+		idempotencyKeyParam = idempotencyKey
+	}
 	err = tx.QueryRow(ctx,
-		"INSERT INTO sales (company_id, shop_id, seller_id, total_amount) VALUES ($1, $2, $3, $4) RETURNING id",
-		companyID, shopID, sellerID, total).Scan(&saleID)
+		"INSERT INTO sales (company_id, shop_id, seller_id, total_amount, idempotency_key) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+		companyID, shopID, sellerID, total, idempotencyKeyParam).Scan(&saleID)
 	if err != nil {
+		// Гонка: два запроса с одним и тем же ключом прошли проверку выше
+		// одновременно (оба не нашли существующую запись) и оба пытаются
+		// вставить — уникальный индекс (company_id, idempotency_key)
+		// отклонит второй INSERT. В этом случае просто отдаём id, который
+		// вставила первая транзакция, вместо ошибки пользователю.
+		if idempotencyKey != "" && isUniqueViolation(err) {
+			var existingID int
+			lookupErr := r.db.QueryRow(ctx,
+				"SELECT id FROM sales WHERE company_id = $1 AND idempotency_key = $2",
+				companyID, idempotencyKey).Scan(&existingID)
+			if lookupErr == nil {
+				return existingID, nil
+			}
+		}
 		return 0, err
 	}
 
